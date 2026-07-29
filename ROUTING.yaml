@@ -1,0 +1,77 @@
+# ROUTING.yaml — 接缝 A 路由表（domain × action × tier → provider/model）
+# 权威契约见 OPC-v4 §2.1 接缝 A、§1.3（拒绝 LiteLLM 进程）。
+# 本文件是「我写的」那一半（YAML + 四指标数据）；模型与推理服务是「外包的」。
+#
+# 解析规则（seam_a/router.py 实现）：
+#   1. 调用方经请求头 X-Loop-Domain / X-Loop-Action / X-Loop-Tier 携带路由键
+#      （缺省分别为 default / chat / standard）。
+#   2. 在 routes 里找匹配项（字段值 "*" 代表通配）；按「非通配字段数」计特异性，
+#      最具体者优先；同分取文件中靠前者。
+#   3. 无任何匹配 → 用 default 段。
+#   4. router 把请求 body.model 改写为解析出的真实模型名后，转发到
+#      provider.base_url + /chat/completions（OpenAI 兼容），Authorization 取
+#      api_key_env 指向的环境变量。
+#
+# provider.base_url 必须是 OpenAI 兼容 endpoint（已含 /v1 或等价前缀）。
+# api_key_env 只指向「环境变量名」，绝不在此文件写明文 key。
+# 四指标（首次通过率/重放劣化等）积累后回填到对应 route 的 metrics 段，供升级环判定。
+
+schema: 1
+
+providers:
+  qwen:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"
+  strongest:
+    # planner/最强模型走这里；key 复用 plan-ops-1 沙盒的 LLM_GATEWAY_KEY
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "LLM_GATEWAY_KEY"
+
+default:
+  provider: qwen
+  model: qwen3-max
+
+routes:
+  # planner 提波次 / 周复盘：用最强模型
+  - domain: plan
+    action: propose
+    tier: critical
+    provider: strongest
+    model: gpt-5
+    metrics: {}
+  - domain: plan
+    action: retro
+    tier: standard
+    provider: strongest
+    model: gpt-5
+    metrics: {}
+
+  # 验证工（异构）：与实现工不同 provider，走 qwen 池
+  - domain: verify
+    action: "*"
+    tier: "*"
+    provider: qwen
+    model: qwen3-max
+    metrics: {}
+
+  # 实现工：trivial 走便宜档，standard/critical 走主力
+  - domain: impl
+    action: "*"
+    tier: trivial
+    provider: qwen
+    model: qwen-turbo
+    metrics: {}
+  - domain: impl
+    action: "*"
+    tier: standard
+    provider: qwen
+    model: qwen3-max
+    metrics: {}
+
+  # 审计工：只做归类，便宜档即可
+  - domain: audit
+    action: "*"
+    tier: "*"
+    provider: qwen
+    model: qwen-turbo
+    metrics: {}
