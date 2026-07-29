@@ -1,0 +1,22 @@
+audit:
+  shards_per_day: 2
+  max_new_findings_per_day: 8
+  min_confidence: 0.6
+  require_evidence: true
+  dedup: fingerprint            # sha256(lens + normalized_path + symbol + rule_id)
+  auto_throttle: {window_days: 14, adopt_rate_floor: 0.35, stale_close_days: 21}
+plan:
+  max_cards_per_wave: 14
+  value_vs_internal_ratio: 0.7
+  auto_approve_tiers: [trivial]
+  human_touch_budget: 3
+execute:
+  max_parallel_cards: 6          # 沙盒数可以远大于这个值
+  max_diff_lines: {trivial: 300, standard: 600, critical: 400}
+  max_cards_per_session: 6
+  race_tiers: [critical]         # 影子实现
+  sandbox_pool_min: 8
+upstream:
+  min_age_days: 7
+  trigger: on_wave_open          # ★不按周
+  auto_tier: {seam_a: trivial, seam_d: trivial, seam_b: standard, checkers_or_workflows: critical}
