@@ -75,9 +75,20 @@ log "  -> PR #$PR_NUM ($PR_URL)"
 
 # 5. done（合并 PR + 置卡 state=done + 关 issue）
 log "step5: merge PR + done"
-# admin 合并绕过 branch protection（canary 是合成工单，无需 review）
-gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash --delete-branch --admin >/dev/null \
-  || gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash --delete-branch >/dev/null
+# admin 合并绕过 branch protection + merge queue（canary 是合成工单，无需 review）
+# 注意：--delete-branch 与 merge queue 不兼容，故合并后单独删分支
+if ! gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash --admin >/dev/null 2>&1; then
+  log "  -> admin merge failed, try plain squash merge"
+  gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash >/dev/null
+fi
+# 等待合并生效（merge queue 可能延迟），最多轮询 60 秒
+for i in $(seq 1 30); do
+  PR_MERGED=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json merged --jq '.merged' 2>/dev/null || echo false)
+  [ "$PR_MERGED" = "true" ] && break
+  sleep 2
+done
+# 清理 canary 分支（合并后）
+git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
 DONE_BODY='```json loop
 {"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
 ```'
