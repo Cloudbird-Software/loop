@@ -107,4 +107,34 @@ install_tool syft "https://github.com/anchore/syft/releases/latest/download/syft
 # grype
 install_tool grype "https://github.com/anchore/grype/releases/latest/download/grype-linux-amd64"
 
+# opencode（接缝 B 执行体，异构验证工；pin 版本 + SHA256 校验，卡包 A2/A4）
+# 校验值以注释占位，由 E 包统一登记进 UPSTREAM.yaml 后回填真实值；
+# A 包已先在 UPSTREAM.yaml 追加 opencode 条目（格式照 OPC-v4 P9）。
+# 在占位值未回填前，sha256 校验降级为"打印 actual + 警告"，不阻断 bootstrap；
+# E 包填入真实 sha256 后自动启用硬校验（不匹配即跳过安装）。
+OPENCODE_VERSION="${OPENCODE_VERSION:-v0.0.0}"                       # pin：E 包填真实 release tag
+OPENCODE_SHA256="${OPENCODE_SHA256:-PLACEHOLDER_FILL_BY_UPSTREAM}"  # 校验占位，E 包填
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "Installing opencode ${OPENCODE_VERSION}..."
+  OPENCODE_URL="https://github.com/sst/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-amd64"
+  OPENCODE_TMP="/tmp/opencode"
+  if python3 -c "import urllib.request; urllib.request.urlretrieve('${OPENCODE_URL}', '${OPENCODE_TMP}')" 2>/dev/null; then
+    ACTUAL=$(sha256sum "${OPENCODE_TMP}" 2>/dev/null | awk '{print $1}' || echo "")
+    if [ "${OPENCODE_SHA256}" = "PLACEHOLDER_FILL_BY_UPSTREAM" ]; then
+      echo "  opencode sha256 still PLACEHOLDER — verify disabled until E package fills UPSTREAM.yaml (actual=${ACTUAL})"
+      chmod +x "${OPENCODE_TMP}" 2>/dev/null && mv "${OPENCODE_TMP}" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode move failed"
+    elif [ -n "${ACTUAL}" ] && [ "${ACTUAL}" = "${OPENCODE_SHA256}" ]; then
+      echo "  opencode sha256 OK (${ACTUAL})"
+      chmod +x "${OPENCODE_TMP}" 2>/dev/null && mv "${OPENCODE_TMP}" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode move failed"
+    else
+      echo "  WARNING: opencode sha256 mismatch (expected ${OPENCODE_SHA256}, got ${ACTUAL}), skipping install"
+    fi
+  else
+    echo "WARNING: opencode download failed, skipping (will retry on first use)"
+  fi
+else
+  echo "opencode: already installed"
+fi
+opencode --version 2>/dev/null || echo "  (opencode --version not available yet)"
+
 echo "=== bootstrap.sh complete ==="

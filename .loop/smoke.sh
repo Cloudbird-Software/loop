@@ -582,6 +582,209 @@ else
 fi
 
 # ============================================================
+# Stage J: finding/propose/verdict handlers (卡包 A2/A4/W4-1/V3/V2)
+# 必测：无 evidence 的 finding 被拒 / head_sha 过期的 verdict 被拒
+# ============================================================
+echo ""
+echo "=== Stage J: finding / propose / verdict handlers ==="
+STAGE_J_OUT=$(python3 - <<'PY'
+import os, sys, json, time, pathlib, hashlib
+os.environ["LOOP_ROOT"]="/tmp/loopd-smoke-j"
+os.environ["LOOP_WS"]="/tmp/loopd-smoke-j/ws"
+os.environ["LOOP_ORG"]="test-org"
+os.environ["LOOP_REPO"]="test-repo"
+os.environ["LOOP_ROLE"]="impl"
+os.environ["LOOP_MODEL"]="test-model"
+os.environ["LOOP_SANDBOX_ID"]="smoke-j"
+os.environ["LOOP_BRANCH_PREFIX"]="agent"
+os.environ["LOOP_LEASE_MIN"]="45"
+os.environ["LOOP_POLL_MS"]="100"
+os.environ["LOOP_HEARTBEAT_SEC"]="999"
+os.environ["LOOP_AUTOSAVE_SEC"]="999"
+os.environ["LOOP_NEXT_BLOCK_SEC"]="5"
+os.environ["LOOP_MAX_CARDS_PER_SESSION"]="6"
+os.environ["LOOP_IO_MODE"]="shim"
+os.environ["GH_TOKEN"]="dummy"
+# WS 必须在 import 前就绪（loopd 在 import 时读 LOOP_WS）
+ws = pathlib.Path(os.environ["LOOP_WS"]); ws.mkdir(parents=True, exist_ok=True)
+root = pathlib.Path(os.environ["LOOP_ROOT"])
+(root/".loop").mkdir(parents=True, exist_ok=True)
+sys.path.insert(0, os.environ.get("SMOKE_LOOPD","/workspace/loopd"))
+import loopd
+
+results = []
+class FakeProc:
+    def __init__(self, stdout="", stderr="", rc=0):
+        self.stdout=stdout; self.stderr=stderr; self.returncode=rc
+
+def write_json(name, obj):
+    p = ws / name; p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(obj)); return str(p.relative_to(ws))
+
+# ---- J1: 无 evidence 的 finding 被拒（必测） ----
+# 覆盖两种"无证据"形态：字段缺失 / 数组为空
+loopd.gh = lambda *a, **kw: FakeProc("[]")
+no_ev = {"lens":"ci-security","severity":"high","message":"x","path":"a.yml"}  # 无 evidence 字段
+r = loopd.h_finding([write_json("no_ev.json", no_ev)])
+ok = r.get("code")==1 and "evidence" in r.get("stderr","").lower()
+results.append(("j1 无 evidence 字段的 finding 被拒（必测）", ok, r))
+
+empty_ev = {"lens":"ci-security","severity":"high","message":"x","path":"a.yml","evidence":[]}  # 空数组
+r = loopd.h_finding([write_json("empty_ev.json", empty_ev)])
+ok = r.get("code")==1 and "NO_EVIDENCE" in r.get("stderr","")
+results.append(("j1a evidence 空数组的 finding 被拒（NO_EVIDENCE）", ok, r))
+
+# evidence 缺 rule_id/location 也拒收
+bad_ev = {"lens":"ci-security","severity":"high","message":"x","path":"a.yml",
+          "evidence":[{"tool":"zizmor"}]}  # 缺 rule_id + location
+r = loopd.h_finding([write_json("bad_ev.json", bad_ev)])
+ok = r.get("code")==1 and "BAD_EVIDENCE" in r.get("stderr","")
+results.append(("j1b evidence 缺 rule_id/location 被拒", ok, r))
+
+# ---- J2: 合法 finding（带 evidence）被接受 ----
+def gh_create(*a, **kw):
+    if a[:2]==("issue","list"): return FakeProc("[]")
+    if a[:2]==("issue","create"): return FakeProc("https://github.com/o/r/issues/55")
+    return FakeProc("")
+loopd.gh = gh_create
+good = {"lens":"secret-leak","severity":"high","message":"leaked token","path":"src/a.py",
+        "evidence":[{"tool":"gitleaks","rule_id":"aws-access-token","location":"src/a.py:42"}]}
+r = loopd.h_finding([write_json("good.json", good)])
+ok = r.get("code",0)==0 and "OK (Finding" in r.get("stdout","")
+results.append(("j2 合法 finding（带 evidence）被接受", ok, r))
+
+# ---- J3: head_sha 过期的 verdict 被拒 + 重跑提示（必测） ----
+loopd.st = lambda **kw: {"card":{"num":10,"blk":{"id":"v1"}}}
+HEAD_SHA = "aaaa1111bbbb2222cccc3333dddd4444eeee5555"
+loopd.sh = lambda *a, **kw: FakeProc(HEAD_SHA)  # git rev-parse HEAD
+loopd.gh = lambda *a, **kw: FakeProc("")
+vm = {"head_sha":"zzzz9999","blind_phase_commit":"c1","artifact_digest":"d1",
+      "test_plan_version":"v1","acs":[{"id":"AC1","pass":True,"evidence":"tests/t.py::test_a"}]}
+r = loopd.h_verdict([write_json("vm.json", vm)])
+ok = r.get("code")==1 and "SHA_MISMATCH" in r.get("stderr","") and "重跑" in r.get("stderr","")
+results.append(("j3 head_sha 过期的 verdict 被拒 + 重跑提示（必测）", ok, r))
+
+# ---- J4: verdict 缺 acs 被 schema 拒收 ----
+vm_no_acs = {"head_sha":HEAD_SHA,"blind_phase_commit":"c1","artifact_digest":"d1","test_plan_version":"v1"}
+r = loopd.h_verdict([write_json("vm2.json", vm_no_acs)])
+ok = r.get("code")==1 and "MISSING_FIELDS" in r.get("stderr","")
+results.append(("j4 verdict 缺 acs 被 schema 拒收", ok, r))
+
+# j4b: verdict ac 缺 evidence 被拒
+vm_bad_ac = {"head_sha":HEAD_SHA,"blind_phase_commit":"c1","artifact_digest":"d1","test_plan_version":"v1",
+             "acs":[{"id":"AC1","pass":True}]}  # 缺 evidence
+r = loopd.h_verdict([write_json("vm3.json", vm_bad_ac)])
+ok = r.get("code")==1 and "BAD_AC" in r.get("stderr","")
+results.append(("j4b verdict ac 缺 evidence 被拒", ok, r))
+
+# ---- J5: 合法 verdict（head_sha 匹配）被接受 ----
+posted = []
+def gh_comment(*a, **kw):
+    posted.append(a); return FakeProc("")
+loopd.gh = gh_comment
+vm_ok = {"head_sha":HEAD_SHA,"blind_phase_commit":"c1","artifact_digest":"d1","test_plan_version":"v1",
+         "acs":[{"id":"AC1","pass":True,"evidence":"tests/t.py::test_a"},
+                {"id":"AC2","pass":False,"evidence":"tests/t.py::test_b"}]}
+r = loopd.h_verdict([write_json("vm_ok.json", vm_ok)])
+ok = r.get("code",0)==0 and "OK (verdict posted)" in r.get("stdout","") and len(posted)>0
+results.append(("j5 合法 verdict（head_sha 匹配）被接受", ok, r))
+
+# ---- J6: occurrences>=3 改写 proposed_card 标题为'为 X 写一个检查器' ----
+def issue_body_with_occurrences(fp, occ):
+    """构造 occurrences=2 的旧 finding body（第三次重复 → occ 变 3 → 触发改写）。"""
+    old_f = {"lens":"ci-security","severity":"high","message":"template inj","path":"w/a.yml",
+             "evidence":[{"tool":"zizmor","rule_id":"template-injection","location":"w/a.yml:15"}],
+             "occurrences":occ,"fingerprint":fp}
+    pc = {"id":f"chk-{fp[:8]}","role":"impl","paths":["w/a.yml"],"tier":"standard","charter":["G0"],
+          "title":f"为 ci-security finding #{fp[:8]} 写一个自动检查器","acceptance":["x"]}
+    return (
+        f"```json finding\n{json.dumps(old_f, indent=2)}\n```\n\n"
+        f"Fingerprint: `{fp}`  \nOccurrences: **{occ}**\n\n"
+        f"---\n\n## Proposed Card\n\n```json loop\n{json.dumps(pc, indent=2)}\n```\n"
+    )
+
+fp6 = hashlib.sha256(b"ci-security|w/a.yml|template inj").hexdigest()[:16]
+# 旧 issue occurrences=2 → 再来一次 = 3
+edited_bodies = []
+def gh_for_dup(*a, **kw):
+    if a[:2]==("issue","list"):
+        return FakeProc(json.dumps([{"number":99,"body":issue_body_with_occurrences(fp6, 2)}]))
+    if a[:2]==("issue","edit"):
+        # 正确定位 --body：遍历找到其下标，取下一项（不要用 a[4]，会取到 -R 的值）
+        body = None
+        for i in range(len(a)-1):
+            if a[i] == "--body":
+                body = a[i+1]; break
+        if body is None:
+            body = kw.get("--body", "")
+        edited_bodies.append(body); return FakeProc("")
+    return FakeProc("")
+loopd.gh = gh_for_dup
+dup3 = {"lens":"ci-security","severity":"high","message":"template inj","path":"w/a.yml",
+        "evidence":[{"tool":"zizmor","rule_id":"template-injection","location":"w/a.yml:88"}]}
+r = loopd.h_finding([write_json("dup3.json", dup3)])
+occ3_ok = False
+if edited_bodies:
+    nb = edited_bodies[-1]
+    occ3_ok = (
+        "为 ci-security.template-injection 写一个检查器" in nb
+        and "Occurrences: **3**" in nb
+    )
+results.append(("j6 occurrences>=3 改写 proposed_card 标题为'为 X 写一个检查器'", occ3_ok, (r, edited_bodies[:1])))
+
+# ---- J7: propose PR 正文带'机器自检'占位段（仅允许 waves/**） ----
+import subprocess, tempfile
+pr_bodies = []
+def gh_pr_create(*a, **kw):
+    for i, tok in enumerate(a):
+        if tok == "--body" and i+1 < len(a):
+            pr_bodies.append(a[i+1]); break
+    return FakeProc("https://github.com/o/r/pull/7")
+loopd.gh = gh_pr_create
+# 先让 git diff 只返回 waves/ 路径
+# 注意：sh("git","-C",WS,...) 调用前缀带 -C，所以通过"关键字段在 a 中出现"判断
+def sh_good_diff(*a, **kw):
+    if "rev-parse" in a: return FakeProc("night/wave-1")
+    if "merge-base" in a: return FakeProc("cafebabe")
+    if "diff" in a: return FakeProc("waves/WAVE-1.md")
+    return FakeProc("")
+loopd.sh = sh_good_diff
+loopd.do_save = lambda *a, **kw: None  # 避免真的 git push
+# 确保 waves/WAVE-1.md 文件存在（h_propose 先查 fpath.exists）
+(ws/"waves").mkdir(exist_ok=True); (ws/"waves"/"WAVE-1.md").write_text("# WAVE-1\n")
+r = loopd.h_propose(["waves/WAVE-1.md"])
+ok = (r.get("code",0)==0 and pr_bodies
+      and "机器自检" in pr_bodies[-1]
+      and "speckit.analyze" in pr_bodies[-1]
+      and "speckit.checklist" in pr_bodies[-1]
+      and "卡片 paths 两两无 glob 交叉" in pr_bodies[-1])
+results.append(("j7 propose PR 正文带'机器自检'占位段（仅允许 waves/**）", ok, (r, pr_bodies[:1])))
+
+# ---- J8: propose 越界（含非 waves/**）被拒 ----
+def sh_bad_diff(*a, **kw):
+    if "rev-parse" in a: return FakeProc("night/wave-1")
+    if "merge-base" in a: return FakeProc("cafebabe")
+    if "diff" in a: return FakeProc("waves/WAVE-1.md\nsrc/bad.py")
+    return FakeProc("")
+loopd.sh = sh_bad_diff
+(ws/"waves"/"WAVE-2.md").write_text("# WAVE-2\n")
+r = loopd.h_propose(["waves/WAVE-2.md"])
+ok = r.get("code")==1 and "OUT_OF_SCOPE" in r.get("stderr","")
+results.append(("j8 propose 越界（含非 waves/**）被拒", ok, r))
+
+for name, ok, detail in results:
+    print(("PASS " if ok else "FAIL ")+name+("" if ok else f" :: {detail}"))
+print("STAGE_J_" + ("OK" if all(r[1] for r in results) else "FAIL"))
+PY
+)
+echo "${STAGE_J_OUT}"
+if echo "${STAGE_J_OUT}" | grep -q "STAGE_J_OK" && ! echo "${STAGE_J_OUT}" | grep -q "FAIL"; then
+  pass "j. finding/propose/verdict handlers (无证据拒收 + head_sha 过期拒收 + occurrences>=3 + 机器自检)"
+else
+  fail "j. finding/propose/verdict handlers (无证据拒收 + head_sha 过期拒收 + occurrences>=3 + 机器自检)"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""

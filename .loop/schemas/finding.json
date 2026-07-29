@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Cloudbird-Software/loop/.loop/schemas/finding.json",
+  "title": "Finding",
+  "description": "loop finding 输入 schema。evidence 为空或任一 evidence 项缺 tool/rule_id/location 一律拒收（非零退出）。由 loopd/loopd.py 的 h_finding 用标准库逐字段校验（不依赖 jsonschema 运行时）。",
+  "type": "object",
+  "required": ["lens", "severity", "message", "path", "evidence"],
+  "additionalProperties": true,
+  "properties": {
+    "lens": {
+      "type": "string",
+      "minLength": 1,
+      "description": "产出该 finding 的 lens 名（如 ci-security / secret-leak）"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"],
+      "description": "严重度（severity 自动升档是后续 W3 特性，本版 finding 处理器只做 occurrences>=3 的 proposed_card 标题改写）"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "问题描述（一句话）"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "问题所在文件或路径（定位用）"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "硬证据，至少 1 项；无 evidence 一律拒收。每项必须含 tool + rule_id + location。",
+      "items": {
+        "type": "object",
+        "required": ["tool", "rule_id", "location"],
+        "additionalProperties": true,
+        "properties": {
+          "tool": {
+            "type": "string",
+            "minLength": 1,
+            "description": "产出该证据的确定性工具名（如 zizmor / gitleaks / osv-scanner）"
+          },
+          "rule_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "工具规则 ID（如 template-injection / gitleaks-aws-access-token）"
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "description": "可定位的 run 链接或 文件:行号（如 .github/workflows/x.yml:31 或 z.sarif#/runs/0/results/3）"
+          }
+        }
+      }
+    }
+  }
+}
