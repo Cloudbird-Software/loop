@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-004",
+  "source": {"repo": "product-x", "card_number": 21, "card_id": "C-2026W31-004", "merged_sha": "d4e5f6a"},
+  "card_description": "Introduce typed config loader in src/config/ with env override + unit test.",
+  "tier": "trivial",
+  "paths": ["src/config/**", "tests/unit/config/**"],
+  "acceptance": ["AC1: env overrides file values", "AC2: unknown keys raise ConfigError"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/config/test_loader.py::test_env_override", "must_pass": true},
+    {"kind": "gate", "ref": "gate/test", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "d4e5f6a", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 47, "cost_yuan": 0.0}
+}

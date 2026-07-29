@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-07-29T16:45:50Z",
+  "replayed_cards": 10,
+  "metrics": {
+    "first_ci_pass_rate": 1.0,
+    "reopen_count": 0,
+    "avg_diff_lines": 48.8,
+    "single_card_cost_yuan": 0.0
+  },
+  "thresholds": {
+    "first_ci_pass_rate_drop": 0.05,
+    "reopen_count_increase": 1,
+    "avg_diff_lines_increase_ratio": 0.2,
+    "single_card_cost_increase_ratio": 0.3
+  }
+}

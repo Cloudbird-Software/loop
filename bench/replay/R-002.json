@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-002",
+  "source": {"repo": "product-x", "card_number": 19, "card_id": "C-2026W31-002", "merged_sha": "b2c3d4e"},
+  "card_description": "Wire error envelope into the UI error banner with a mapping table.",
+  "tier": "trivial",
+  "paths": ["src/ui/error/**", "tests/unit/ui/error/**"],
+  "acceptance": ["AC1: banner renders code+message", "AC2: mapping table covered by unit test"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/ui/error/test_banner.py::test_renders_code_message", "must_pass": true},
+    {"kind": "gate", "ref": "gate/build", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "b2c3d4e", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 52, "cost_yuan": 0.0}
+}

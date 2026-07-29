@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-003",
+  "source": {"repo": "product-x", "card_number": 20, "card_id": "C-2026W31-003", "merged_sha": "c3d4e5f"},
+  "card_description": "Add retry-with-backoff helper to src/net/ and a unit test exercising 3 attempts.",
+  "tier": "trivial",
+  "paths": ["src/net/**", "tests/unit/net/**"],
+  "acceptance": ["AC1: retry returns on first success", "AC2: retry exhausts 3 attempts then raises"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/net/test_retry.py::test_exhausts_attempts", "must_pass": true},
+    {"kind": "gate", "ref": "gate/test", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "c3d4e5f", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 61, "cost_yuan": 0.0}
+}
