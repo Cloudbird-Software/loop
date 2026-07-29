@@ -49,7 +49,7 @@ GIT_TERMINAL_PROMPT=0
 ## ③ 敏感变量
 
 ```
-GH_TOKEN=                                # 人类粘贴 S6 的 PAT（fine-grained：product-x 的 Contents/Issues/PR/Metadata，★绝不给 Workflows）
+GH_TOKEN=                                # 人类粘贴 S6 的 PAT（fine-grained：product-x 的 Contents/Issues/PR/Metadata，★绝不给 Workflows）。命名统一：探针/点击器语境记作 WK_PAT，沙盒语境记作 GH_TOKEN，两者是同一枚 S6 PAT
 JOURNAL_MIRROR_TOKEN=                    # 仅 plan-ops-1 沙盒填，W1 可先留空
 LLM_GATEWAY_KEY=                         # 仅 plan-ops-1 沙盒填，接缝A 网关用，W1 可先留空
 LOOP_BOOTSTRAP_SHA256=601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260
