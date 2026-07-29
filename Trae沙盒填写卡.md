@@ -1,9 +1,9 @@
-# Trae 沙盒填写卡（loop v0.1.1）
+# Trae 沙盒填写卡（loop v0.1.2）
 
 > 本卡对应手册第 2.2 节七个槽位的逐字段值。建沙盒时按本卡照填即可。
-> 两个关键哈希已由 loop 仓库 v0.1.1 计算填入，无需再算：
-> - `LOOP_PROMPTS_SHA` = `32390306a0917f48b3f103702eb326db59535ba0`（loop 仓库 `prompts/` 在 v0.1.1 的 git tree sha；prompts/ 自 v0.1.0 未动，故与 v0.1.0 一致）
-> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.1 的 sha256）
+> 两个关键哈希已由 loop 仓库 v0.1.2 计算填入，无需再算：
+> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.2 的 git tree sha；v0.1.2 改了 P0.md 的 EMPTY 措辞，故 sha 较 v0.1.1 变化）
+> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.2 的 sha256；v0.1.2 未动 bootstrap，故与 v0.1.1 一致）
 
 ---
 
@@ -38,8 +38,8 @@ LOOP_LEASE_MIN=45
 LOOP_HEARTBEAT_SEC=60
 LOOP_AUTOSAVE_SEC=180
 LOOP_BRANCH_PREFIX=agent
-LOOP_BOOTSTRAP_REF=v0.1.1                # bootstrap 的 pin
-LOOP_PROMPTS_SHA=32390306a0917f48b3f103702eb326db59535ba0
+LOOP_BOOTSTRAP_REF=v0.1.2                # bootstrap 的 pin
+LOOP_PROMPTS_SHA=979736b02639621256599db21f0352d2f0fc5bbe
 GH_HOST=github.com
 GIT_TERMINAL_PROMPT=0
 ```
@@ -52,7 +52,7 @@ GIT_TERMINAL_PROMPT=0
 GH_TOKEN=                                # 人类粘贴 S6 的 PAT（fine-grained：product-x 的 Contents/Issues/PR/Metadata，★绝不给 Workflows）。命名统一：探针/点击器语境记作 WK_PAT，沙盒语境记作 GH_TOKEN，两者是同一枚 S6 PAT
 JOURNAL_MIRROR_TOKEN=                    # 仅 plan-ops-1 沙盒填，W1 可先留空
 LLM_GATEWAY_KEY=                         # 仅 plan-ops-1 沙盒填，接缝A 网关用，W1 可先留空
-LOOP_BOOTSTRAP_SHA256=601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260
+LOOP_BOOTSTRAP_SHA256=601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  # v0.1.2 同 v0.1.1（未动 bootstrap）
 ```
 
 > `LOOP_BOOTSTRAP_SHA256` 是公开哈希（不是 secret），已填好；环境启动脚本会拿它校验拉下来的 `bootstrap.sh`，不匹配即 `SHA_MISMATCH` 退出。
@@ -124,12 +124,12 @@ loop status; echo; echo "=== waiting for: loop next ==="
 
 ---
 
-### 附：两个 SHA 的复核命令（push 完 v0.1.1 后可随时验）
+### 附：两个 SHA 的复核命令（push 完 v0.1.2 后可随时验）
 
 ```bash
-# LOOP_PROMPTS_SHA（应输出 32390306a0917f48b3f103702eb326db59535ba0）
-gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.1:prompts --jq .sha
+# LOOP_PROMPTS_SHA（应输出 979736b02639621256599db21f0352d2f0fc5bbe）
+gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.2:prompts --jq .sha
 
 # LOOP_BOOTSTRAP_SHA256（应输出 601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  -）
-curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.1/loopd/bootstrap.sh | sha256sum
+curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.2/loopd/bootstrap.sh | sha256sum
 ```
