@@ -1,9 +1,9 @@
-# Trae 沙盒填写卡（loop v0.1.3）
+# Trae 沙盒填写卡（loop v0.1.4）
 
 > 本卡对应手册第 2.2 节七个槽位的逐字段值。建沙盒时按本卡照填即可。
-> 两个关键哈希已由 loop 仓库 v0.1.3 计算填入，无需再算：
-> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.3 的 git tree sha；v0.1.3 未动 prompts/，故与 v0.1.2 一致）
-> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.3 的 sha256；v0.1.3 未动 bootstrap，故与 v0.1.1 一致）
+> 两个关键哈希已由 loop 仓库 v0.1.4 计算填入，无需再算：
+> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.4 的 git tree sha；v0.1.4 未动 prompts/，故与 v0.1.2 一致）
+> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.4 的 sha256；v0.1.4 未动 bootstrap，故与 v0.1.1 一致）
 
 ---
 
@@ -38,7 +38,7 @@ LOOP_LEASE_MIN=45
 LOOP_HEARTBEAT_SEC=60
 LOOP_AUTOSAVE_SEC=180
 LOOP_BRANCH_PREFIX=agent
-LOOP_BOOTSTRAP_REF=v0.1.3                # bootstrap 的 pin
+LOOP_BOOTSTRAP_REF=v0.1.4                # bootstrap 的 pin
 LOOP_PROMPTS_SHA=979736b02639621256599db21f0352d2f0fc5bbe
 GH_HOST=github.com
 GIT_TERMINAL_PROMPT=0
@@ -124,12 +124,12 @@ loop status; echo; echo "=== waiting for: loop next ==="
 
 ---
 
-### 附：两个 SHA 的复核命令（push 完 v0.1.3 后可随时验）
+### 附：两个 SHA 的复核命令（push 完 v0.1.4 后可随时验）
 
 ```bash
 # LOOP_PROMPTS_SHA（应输出 979736b02639621256599db21f0352d2f0fc5bbe）
-gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.3:prompts --jq .sha
+gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.4:prompts --jq .sha
 
 # LOOP_BOOTSTRAP_SHA256（应输出 601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  -）
-curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.3/loopd/bootstrap.sh | sha256sum
+curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.4/loopd/bootstrap.sh | sha256sum
 ```
