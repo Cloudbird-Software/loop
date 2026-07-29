@@ -1,16 +1,13 @@
-name: materializer
+# 本 workflow 已迁移到 product-x 仓库（D0 决策，见 DECISIONS.md ADR-002）。
+# 现位置：Cloudbird-Software/product-x/.github/workflows/materializer.yml
+# 触发：push to product-x main, paths waves/**
+# token：product-x workflow 默认 GITHUB_TOKEN（免 conductor app secret）
+# 本文件保留为转发锚点，不再执行任何 job。
+name: materializer (migrated to product-x)
 on:
-  push:
-    branches: [main]
-    paths: ["waves/**"]
-permissions: {contents: read}
+  workflow_dispatch:
 jobs:
-  materialize:
+  noop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - id: t
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
-        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}"}
-      - run: python conductor/materialize.py waves/
-        env: {GH_TOKEN: "${{ steps.t.outputs.token }}"}
+      - run: echo "materializer has migrated to product-x repo (see DECISIONS.md ADR-002)"
