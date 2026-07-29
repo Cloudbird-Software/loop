@@ -18,6 +18,9 @@ mkdir -p "$LOGDIR"
 
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$TRACE_FILE" >&2; }
 
+# 配置 git 凭据助手：让 git push 走 gh 的 token（GH_TOKEN）
+gh auth setup-git >/dev/null 2>&1 || true
+
 # 确保辅助标签存在（issue type 由 Card 提供，label 仅作筛选辅助）
 ensure_label() {
   local name="$1" color="$2" repo="$3"
