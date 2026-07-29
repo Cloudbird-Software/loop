@@ -2,28 +2,71 @@ name: canary
 on:
   schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:
-permissions: {contents: read, issues: write}
+permissions: {contents: read, issues: write, pull-requests: write}
 jobs:
-  canary:
+  # ============================================================
+  # Job 1: 合成工单走完整链路（开卡→claim→commit→PR→done→关卡）
+  # 任一环节断 → 下一步 if: failure() 开 Incident 并 @人类
+  # ============================================================
+  chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run canary chain
+        env:
+          # 用高权限 PAT：需 admin merge 绕过 product-x 的 code-owner 保护
+          GH_TOKEN: ${{ secrets.LOOP_CANARY_TOKEN }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          LOOP_PRODUCT: ${{ vars.LOOP_PRODUCT }}
+          LOOP_HUMAN: ${{ vars.LOOP_HUMAN }}
+        run: |
+          set -e
+          chmod +x .loop/scripts/canary-chain.sh
+          .loop/scripts/canary-chain.sh
+      - name: Open Incident on chain break
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_CANARY_TOKEN }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          LOOP_HUMAN: ${{ vars.LOOP_HUMAN }}
+        run: |
+          set -e
+          MENTION="${LOOP_HUMAN:+@$LOOP_HUMAN }"
+          gh label create "incident" -R "$LOOP_ORG/loop" --color b60205 --if-not-exists 2>/dev/null || true
+          # 写 body 到文件，避免 YAML literal block 里多行字符串的缩进问题
+          INC_BODY="$(mktemp)"
+          {
+            echo "${MENTION}Canary synthetic-ticket chain failed in run $GITHUB_RUN_ID."
+            echo ""
+            echo "The full chain (open card → claim → commit → PR → done → gate) did not complete. A 30-minute break threshold is enforced by the hourly cadence: if this run failed, the chain has been broken since the last successful run."
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo ""
+            echo "Action: inspect the failed 'Run canary chain' step log; check conductor / loopd / product-x branch protection."
+          } > "$INC_BODY"
+          # 30 分钟阈值：本 hourly run 失败即视为链路断裂（cron 间隔 1h，断 >30min 由 survival 兜底）
+          gh issue create -R "$LOOP_ORG/loop" \
+            --title "Incident: canary chain broken @ $(date -u +%FT%TZ)" \
+            --label "incident" \
+            --body-file "$INC_BODY" || echo "WARN: failed to open Incident"
+
+  # ============================================================
+  # Job 2: 26 小时存活自检（audit/export/canary 任一超时 → Incident）
+  # ============================================================
+  survival:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: t
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
-      - name: Synthetic ticket through full chain
+      - name: 26h survival self-check
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_ORG: ${{ github.repository_owner }}
-          LOOP_PRODUCT: product-x
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_HUMAN: ${{ vars.LOOP_HUMAN }}
         run: |
           set -e
-          # 合成工单：开一张 trivial Card，走 claimed → in_progress → in_review → done 全链路
-          CANARY_BODY='```json loop
-          {"id":"canary-'$(date +%s)'","state":"ready","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0}
-          ```'
-          NUM=$(gh issue create -R "$LOOP_ORG/$LOOP_PRODUCT" --title "canary: synthetic ticket" --label "card" --body "$CANARY_BODY" | grep -o '[0-9]*')
-          echo "Created canary issue #$NUM"
-          # TODO: 模拟 claim → commit → PR → done 全链路
-          # 断链检测：如果 30 分钟内没走完 → 开 Incident
-          echo "Canary ticket #$NUM created, chain check TODO"
+          chmod +x .loop/scripts/canary-survival.sh
+          .loop/scripts/canary-survival.sh || true
