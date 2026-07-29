@@ -15,27 +15,86 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_ORG: ${{ github.repository_owner }}
-          LOOP_PRODUCT: product-x
+          LOOP_PRODUCT: ${{ vars.LOOP_PRODUCT || 'product-x' }}
           JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
-          JOURNAL_MIRROR_TOKEN: ${{ secrets.JOURNAL_MIRROR_TOKEN }}
         run: |
           set -e
+          test -n "$JOURNAL_REPO" || { echo "ERROR: vars.JOURNAL_REPO not set"; exit 1; }
           mkdir -p journal-snapshot
-          # 全量导出 issues/PR/comments/reviews/runs/rule-suites
-          gh issue list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 --json number,title,state,labels,createdAt,updatedAt,body > journal-snapshot/issues.json
-          gh pr list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 --json number,title,state,createdAt,mergedAt,headRefName > journal-snapshot/prs.json
+          echo "=== Export issues ==="
+          gh issue list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 \
+            --json number,title,state,labels,createdAt,updatedAt,body > journal-snapshot/issues.json
+          echo "=== Export PRs ==="
+          gh pr list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 \
+            --json number,title,state,createdAt,mergedAt,headRefName > journal-snapshot/prs.json
+          echo "=== Export issue comments ==="
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/comments" --paginate > journal-snapshot/comments.json
+          echo "=== Export PR review comments ==="
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/pulls/comments" --paginate > journal-snapshot/pr-comments.json
+          echo "=== Export reviews (per-PR) ==="
+          # 逐个 PR 拉取 reviews，合并成 reviews.json
+          echo '[]' > journal-snapshot/reviews.json
+          for pr_num in $(jq -r '.[].number' journal-snapshot/prs.json); do
+            gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/pulls/$pr_num/reviews" --paginate 2>/dev/null \
+              | jq --argjson pr "$pr_num" '[.[] | . + {pr_number: $pr}]' \
+              >> journal-snapshot/reviews.tmp.json
+          done
+          if [ -f journal-snapshot/reviews.tmp.json ]; then
+            jq -s 'add' journal-snapshot/reviews.tmp.json > journal-snapshot/reviews.json
+            rm -f journal-snapshot/reviews.tmp.json
+          fi
+          echo "=== Export workflow runs ==="
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/actions/runs?per_page=100" > journal-snapshot/runs.json
-          gh api "/orgs/$LOOP_ORG/rule-suites?per_page=100" > journal-snapshot/rule-suites.json 2>/dev/null || echo '[]' > journal-snapshot/rule-suites.json
-          # TODO: 导出 reviews (gh pr view --json reviews 逐个 PR)
-          # 生成零 LLM 日报（确定性字段）
+          echo "=== Export rule-suites (org) ==="
+          gh api "/orgs/$LOOP_ORG/rule-suites?per_page=100" > journal-snapshot/rule-suites.json 2>/dev/null \
+            || echo '[]' > journal-snapshot/rule-suites.json
+          echo "=== Fetch taps.log from journal repo ==="
+          # 点击器每小时 push taps.log 到 journal/taps/YYYY-MM-DD.log；拉当日文件做 confirm_taps 统计
+          TODAY=$(date -u +%Y-%m-%d)
+          gh api "/repos/$JOURNAL_REPO/contents/taps/$TODAY.log" --jq '.content' 2>/dev/null \
+            | base64 -d > journal-snapshot/taps.log 2>/dev/null \
+            || echo "" > journal-snapshot/taps.log
+          echo "=== Generate zero-LLM daily report ==="
           python3 conductor/scribe_report.py journal-snapshot/ > journal-snapshot/daily-report.md
           cat journal-snapshot/daily-report.md
-      - name: Commit to journal repo
+      - name: Commit snapshot to journal repo + push second remote
         env:
           GH_TOKEN: ${{ secrets.JOURNAL_MIRROR_TOKEN }}
           JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
+          JOURNAL_MIRROR_URL: ${{ vars.JOURNAL_MIRROR_URL }}
+          LOOP_ORG: ${{ github.repository_owner }}
         run: |
-          # TODO: clone journal repo, copy snapshot, commit, push
-          echo "TODO: push to $JOURNAL_REPO (second remote mirror)"
+          set -e
+          test -n "$JOURNAL_REPO" || { echo "ERROR: vars.JOURNAL_REPO not set"; exit 1; }
+          test -n "$GH_TOKEN"    || { echo "ERROR: secrets.JOURNAL_MIRROR_TOKEN not set"; exit 1; }
+          TODAY=$(date -u +%Y-%m-%d)
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          cd /tmp
+          rm -rf journal-clone
+          # 用 token 拼 https 克隆 URL（不硬编码地址，地址来自 JOURNAL_REPO 变量）
+          JOURNAL_URL="https://x-access-token:${GH_TOKEN}@github.com/${JOURNAL_REPO}.git"
+          git clone --depth 1 "$JOURNAL_URL" journal-clone
+          cd journal-clone
+          # 按日期分目录
+          EXPORT_DIR="exports/${TODAY}"
+          mkdir -p "$EXPORT_DIR"
+          # 拷贝快照（不含 daily-report，单独放一份在日期根）
+          cp -r "${GITHUB_WORKSPACE}/journal-snapshot/"* "$EXPORT_DIR/"
+          # 日报单放一份便于浏览
+          mkdir -p "reports"
+          cp "${GITHUB_WORKSPACE}/journal-snapshot/daily-report.md" "reports/${TODAY}-${TS}.md"
+          git add -A
+          git config user.name  "loop-scribe-bot"
+          git config user.email "scribe-bot@users.noreply.github.com"
+          git commit -m "scribe: export ${TODAY} ${TS}" || { echo "nothing to commit"; exit 0; }
+          # 第一远端：journal 仓库本身
+          git push origin HEAD
+          # 第二远端（镜像，可选）：从变量读地址，不硬编码
+          if [ -n "$JOURNAL_MIRROR_URL" ]; then
+            git remote add mirror "$JOURNAL_MIRROR_URL" 2>/dev/null || git remote set-url mirror "$JOURNAL_MIRROR_URL"
+            git push mirror HEAD
+            echo "pushed to second remote (mirror)"
+          else
+            echo "JOURNAL_MIRROR_URL not set, skip second remote"
+          fi
+          echo "=== journal commit done: exports/${TODAY} @ ${TS} ==="
