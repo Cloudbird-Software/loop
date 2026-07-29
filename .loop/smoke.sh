@@ -181,6 +181,53 @@ done
 if [ "${F_OK}" = "1" ]; then pass "f. help prints verb table"; else fail "f. help prints verb table"; fi
 
 # ============================================================
+# g. 部署模拟：按 bootstrap 逻辑把 loopd/ 装进临时目录，
+#    loopd --daemon 能起、loop run logs.tail 不返回 UNKNOWN_INTENT
+# ============================================================
+# 先杀掉之前的 daemon，避免争抢同一个 relay inbox
+if [ -n "${DAEMON_PID:-}" ] && kill -0 "${DAEMON_PID}" 2>/dev/null; then
+  kill "${DAEMON_PID}" 2>/dev/null || true; wait "${DAEMON_PID}" 2>/dev/null || true
+fi
+DAEMON_PID=""
+
+DEPLOY="${TMPROOT}/deploy"
+mkdir -p "${DEPLOY}/bin" "${DEPLOY}/etc/loopd"
+install -m 0755 "${REPO_ROOT}/loopd/loopd.py" "${DEPLOY}/bin/loopd"
+install -m 0755 "${REPO_ROOT}/loopd/loop" "${DEPLOY}/bin/loop"
+install -m 0644 "${REPO_ROOT}/loopd/intents.yaml" "${DEPLOY}/etc/loopd/intents.yaml"
+
+# 用部署目录里的 loopd/loop（PATH 前置）；intents 走 LOOPD_INTENTS_PATH（第一候选）
+export PATH="${DEPLOY}/bin:${PATH}"
+export LOOPD_INTENTS_PATH="${DEPLOY}/etc/loopd/intents.yaml"
+# logs.tail 指向 .loop/logs/app.log（相对 WS），建一个空文件让 tail 成功
+touch "${TMPWS}/.loop/logs/app.log"
+# 清理 relay，避免残留请求干扰
+rm -f "${TMPROOT}/.loop/relay/inbox/"*.json "${TMPROOT}/.loop/relay/outbox/"*.json 2>/dev/null
+
+# g1. loopd --daemon 能起
+loopd --daemon &
+DAEMON_PID=$!
+sleep 1
+if kill -0 "${DAEMON_PID}" 2>/dev/null; then
+  pass "g1. loopd --daemon starts (deployed binary)"
+else
+  fail "g1. loopd --daemon starts (deployed binary)"
+fi
+
+# g2. loop run logs.tail 不返回 UNKNOWN_INTENT（走部署的 loop shim + loopd daemon）
+G2_OUT=$(loop run logs.tail 2>&1 || true)
+if echo "${G2_OUT}" | grep -q "UNKNOWN_INTENT"; then
+  fail "g2. loop run logs.tail not UNKNOWN_INTENT"
+else
+  pass "g2. loop run logs.tail not UNKNOWN_INTENT"
+fi
+
+# 杀掉部署 daemon，还原 PATH / LOOPD_INTENTS_PATH，避免影响后续静态检查
+kill "${DAEMON_PID}" 2>/dev/null || true; wait "${DAEMON_PID}" 2>/dev/null || true; DAEMON_PID=""
+export PATH="${PATH#${DEPLOY}/bin:}"
+unset LOOPD_INTENTS_PATH
+
+# ============================================================
 # Stage D static checks (workflows)
 # ============================================================
 echo ""

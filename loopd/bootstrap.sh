@@ -35,15 +35,27 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 jq --version
 
-echo "=== [2/4] Deploy loopd.py + loop shim to /usr/local/bin ==="
-# 拉 loopd.py 与 loop shim
-for f in loopd.py loop; do
-  python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/${f}', '/tmp/${f}')"
-  # TODO: sha256 校验位由 loop upstream 流程现场填
-  sudo install -m 0755 "/tmp/${f}" "/usr/local/bin/${f}"
-done
-echo "loopd.py -> $(python3 -c 'import loopd; print(loopd.__file__)' 2>/dev/null || echo /usr/local/bin/loopd.py)"
-echo "loop -> $(which loop)"
+echo "=== [2/4] Deploy loopd + loop shim + intents.yaml ==="
+# 落地 intents.yaml 目录
+sudo mkdir -p /usr/local/etc/loopd
+# 拉 loopd.py → /usr/local/bin/loopd（以 loopd 为名安装，使 loopd --daemon --role X 可直接执行）
+python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/loopd.py', '/tmp/loopd.py')"
+sudo install -m 0755 /tmp/loopd.py /usr/local/bin/loopd
+# 拉 loop shim → /usr/local/bin/loop
+python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/loop', '/tmp/loop')"
+sudo install -m 0755 /tmp/loop /usr/local/bin/loop
+# 拉 intents.yaml → /usr/local/etc/loopd/intents.yaml
+python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/intents.yaml', '/tmp/intents.yaml')"
+sudo install -m 0644 /tmp/intents.yaml /usr/local/etc/loopd/intents.yaml
+# 直接检查 /usr/local/bin/loopd 存在且可执行（不再用 import loopd 探测，那依赖 cwd/PYTHONPATH 不可靠）
+if [ -x /usr/local/bin/loopd ]; then
+  echo "loopd -> /usr/local/bin/loopd (executable)"
+else
+  echo "ERROR: /usr/local/bin/loopd not installed or not executable" >&2
+  exit 1
+fi
+echo "loop -> $(command -v loop)"
+echo "intents.yaml -> /usr/local/etc/loopd/intents.yaml"
 
 echo "=== [3/4] Clone ${LOOP_REPO} to ${LOOP_WS} ==="
 if [ -d "${LOOP_WS}/.git" ]; then

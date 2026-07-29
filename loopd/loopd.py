@@ -416,10 +416,27 @@ def h_upstream(args):
 # run：白名单意图兜底
 # ============================================================
 def load_intents():
-    """加载 intents.yaml 白名单（简易解析，不依赖 PyYAML）。"""
-    p = pathlib.Path(__file__).parent / "intents.yaml"
-    if not p.exists():
-        return {}
+    """加载 intents.yaml 白名单（简易解析，不依赖 PyYAML）。
+
+    按序查找：$LOOPD_INTENTS_PATH → /usr/local/etc/loopd/intents.yaml →
+    Path(__file__).parent / "intents.yaml"，三处都找不到才报错。
+    """
+    candidates = []
+    env_path = E.get("LOOPD_INTENTS_PATH")
+    if env_path:
+        candidates.append(pathlib.Path(env_path))
+    candidates.append(pathlib.Path("/usr/local/etc/loopd/intents.yaml"))
+    candidates.append(pathlib.Path(__file__).parent / "intents.yaml")
+    p = None
+    for c in candidates:
+        if c.exists():
+            p = c
+            break
+    if p is None:
+        raise FileNotFoundError(
+            "intents.yaml not found in any of: "
+            + ", ".join(str(c) for c in candidates)
+        )
     intents = {}
     for line in p.read_text().splitlines():
         line = line.rstrip()
