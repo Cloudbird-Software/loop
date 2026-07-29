@@ -16,6 +16,7 @@ SHIM="${REPO_ROOT}/loopd/loop"
 # 临时环境
 TMPROOT=$(mktemp -d)
 TMPWS="${TMPROOT}/ws"
+mkdir -p "${TMPROOT}/.loop/relay/inbox" "${TMPROOT}/.loop/relay/outbox" "${TMPROOT}/.loop/relay/done" "${TMPROOT}/.loop/logs" "${TMPROOT}/.loop/trash" "${TMPROOT}/.loop/audit"
 mkdir -p "${TMPWS}/.loop/relay/inbox" "${TMPWS}/.loop/relay/outbox" "${TMPWS}/.loop/relay/done" "${TMPWS}/.loop/logs" "${TMPWS}/.loop/trash" "${TMPWS}/.loop/audit"
 
 # 公共环境变量
@@ -226,6 +227,138 @@ fi
 kill "${DAEMON_PID}" 2>/dev/null || true; wait "${DAEMON_PID}" 2>/dev/null || true; DAEMON_PID=""
 export PATH="${PATH#${DEPLOY}/bin:}"
 unset LOOPD_INTENTS_PATH
+
+# ============================================================
+# Stage H: done auto-merge + save path-scope regression
+# ============================================================
+echo ""
+echo "=== Stage H: done auto-merge + save path-scope regression ==="
+
+# h1. done 调用 pr merge --auto —— 用假 gh shim 拦截调用
+GHSHIM="${TMPROOT}/ghshim"
+mkdir -p "${GHSHIM}"
+cat > "${GHSHIM}/gh" <<'SH'
+#!/usr/bin/env bash
+# 记录所有 gh 调用到日志，对 pr merge 返回成功
+LOG="${GHSHIM_LOG:-/tmp/ghshim.log}"
+echo "gh $*" >> "$LOG"
+case "$1 $2" in
+  "pr merge")
+    echo "  (shim) would enqueue PR $4 --auto --squash"
+    exit 0
+    ;;
+  "pr list")
+    echo '[{"number":42,"isDraft":true,"state":"OPEN"}]'
+    exit 0
+    ;;
+  "pr ready")
+    exit 0
+    ;;
+  "api")
+    case "$*" in
+      *allow_auto_merge*) echo "true"; exit 0;;
+      *) echo '{}'; exit 0;;
+    esac
+    ;;
+  "issue view")
+    printf '%s\n' '{"updatedAt":"x","body":"```json loop\n{\"id\":\"h1\",\"state\":\"claimed\"}\n```\n"}'
+    exit 0
+    ;;
+  "issue"*) echo '{}'; exit 0;;
+esac
+exit 0
+SH
+chmod +x "${GHSHIM}/gh"
+
+# 给 fake git repo 配一个本地 origin（让 do_save 的 git push 不 fatal）
+git -C "${TMPWS}" remote remove origin 2>/dev/null || true
+git -C "${TMPWS}" remote add origin "${TMPWS}/.git"
+
+python3 - <<PY
+import os, sys, json, subprocess, pathlib
+os.environ["PATH"] = "${GHSHIM}:" + os.environ["PATH"]
+os.environ["GHSHIM_LOG"] = "${TMPROOT}/ghshim.log"
+os.environ["LOOP_ROOT"]="${TMPROOT}"
+os.environ["LOOP_WS"]="${TMPWS}"
+os.environ["LOOP_ORG"]="test-org"
+os.environ["LOOP_REPO"]="test-repo"
+os.environ["LOOP_ROLE"]="impl"
+os.environ["LOOP_MODEL"]="test-model"
+os.environ["LOOP_SANDBOX_ID"]="smoke-h1"
+os.environ["LOOP_POLL_MS"]="100"
+os.environ["LOOP_NEXT_BLOCK_SEC"]="5"
+os.environ["LOOP_MAX_CARDS_PER_SESSION"]="6"
+os.environ["LOOP_LEASE_MIN"]="45"
+os.environ["LOOP_HEARTBEAT_SEC"]="999"
+os.environ["LOOP_AUTOSAVE_SEC"]="999"
+os.environ["LOOP_BRANCH_PREFIX"]="agent"
+os.environ["LOOP_IO_MODE"]="shim"
+os.environ["GH_TOKEN"]="dummy"
+sys.path.insert(0, "${REPO_ROOT}/loopd")
+import loopd
+loopd.st(card={"num": 99, "blk":{"id":"h1-test","state":"claimed","paths":["h1/**"],"tier":"trivial","role":"impl","charter":["G0"],"attempt":0,"acceptance":["x"]}})
+subprocess.run(["git","-C","${TMPWS}","checkout","-q","-b","agent/h1-test"],check=True)
+out = loopd.h_done([])
+PY
+H1_RC=$?
+if [ "${H1_RC}" = "0" ]; then
+  if grep -q "pr merge" "${TMPROOT}/ghshim.log" 2>/dev/null && grep -q -- "--auto" "${TMPROOT}/ghshim.log" 2>/dev/null; then
+    pass "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+  else
+    fail "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+  fi
+else
+  fail "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+fi
+rm -f "${TMPROOT}/ghshim.log"
+
+# h2. save 后 staged 列表不含 .loop/ 且不含 paths 之外文件
+mkdir -p "${TMPWS}/h2/in" "${TMPWS}/.loop"
+echo "leak" > "${TMPWS}/.loop/CARD.md"
+echo "ok" > "${TMPWS}/h2/in/a.txt"
+cd "${TMPWS}" && git checkout -q -B agent/h2-test 2>/dev/null
+
+python3 - <<PY
+import os, sys, json, subprocess, pathlib
+os.environ["LOOP_ROOT"]="${TMPROOT}"
+os.environ["LOOP_WS"]="${TMPWS}"
+os.environ["LOOP_ORG"]="test-org"
+os.environ["LOOP_REPO"]="test-repo"
+os.environ["LOOP_ROLE"]="impl"
+os.environ["LOOP_MODEL"]="test-model"
+os.environ["LOOP_SANDBOX_ID"]="smoke-h2"
+os.environ["LOOP_POLL_MS"]="100"
+os.environ["LOOP_NEXT_BLOCK_SEC"]="5"
+os.environ["LOOP_MAX_CARDS_PER_SESSION"]="6"
+os.environ["LOOP_LEASE_MIN"]="45"
+os.environ["LOOP_HEARTBEAT_SEC"]="999"
+os.environ["LOOP_AUTOSAVE_SEC"]="999"
+os.environ["LOOP_BRANCH_PREFIX"]="agent"
+os.environ["LOOP_IO_MODE"]="shim"
+os.environ["GH_TOKEN"]="dummy"
+os.environ["PATH"]="${GHSHIM}:" + os.environ["PATH"]
+sys.path.insert(0, "${REPO_ROOT}/loopd")
+import loopd
+loopd.st(card={"num": 88, "blk":{"id":"h2-test","state":"claimed","paths":["h2/in/**"],"tier":"trivial","role":"impl","charter":["G0"],"attempt":0,"acceptance":["x"]}})
+try:
+    loopd.do_save("wip h2")
+except Exception:
+    pass
+PY
+H2_OUT=$(python3 - <<'PY2'
+import subprocess
+p = subprocess.run(["git","-C","${TMPWS}","show","--stat","--name-only","--format=","HEAD"],capture_output=True,text=True)
+files=[f for f in p.stdout.strip().split("\n") if f]
+bad=[f for f in files if f.startswith(".loop/") or not f.startswith("h2/in/")]
+print("LEAK" if bad else "OK")
+PY2
+)
+if [ "${H2_OUT}" = "OK" ]; then
+  pass "h2. save staged only card paths, no .loop/ leak"
+else
+  fail "h2. save staged only card paths, no .loop/ leak"
+fi
+cd "${REPO_ROOT}"
 
 # ============================================================
 # Stage D static checks (workflows)

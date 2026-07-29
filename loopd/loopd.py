@@ -187,11 +187,50 @@ def h_save(args):
     do_save(msg)
     return {"stdout": "OK\n"}
 
+def _card_paths(d):
+    """从当前卡读 paths（GLOB 风格）；无卡返回 None。"""
+    c = d.get("card")
+    if not c:
+        return None
+    return c.get("blk", {}).get("paths")
+
+def _stage_card_paths(paths):
+    """只 stage 卡 paths 白名单内的文件，硬性排除 .loop/（双重保险）。
+
+    返回 staged 文件列表（用于后续自检）。
+    """
+    # 先清掉已 stage 的，确保从干净索引开始
+    sh("git","-C",str(WS),"reset","-q","HEAD","--",":/")
+    # stage 卡 paths（git pathspec 接受 glob，如 'ignition/impl-1/**'）
+    for p in paths or []:
+        sh("git","-C",str(WS),"add","--",p)
+    # 硬性排除 .loop/（即便 paths 误含也不会进 commit）
+    sh("git","-C",str(WS),"reset","-q","HEAD","--",".loop/")
+    staged = sh("git","-C",str(WS),"diff","--cached","--name-only").stdout.strip().split()
+    return [s for s in staged if s]
+
 def do_save(msg):
     (WS/".work").mkdir(exist_ok=True)
-    sh("git","-C",str(WS),"add","-A")
-    sh("git","-C",str(WS),"-c","user.name=loop-worker",
-       "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","-m",msg)
+    d = st()
+    paths = _card_paths(d)
+    if paths is None:
+        # 无卡上下文（如 "w0 probe"）：空提交，绝不乱 stage
+        sh("git","-C",str(WS),"reset","-q","HEAD","--",":/")
+        sh("git","-C",str(WS),"-c","user.name=loop-worker",
+           "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","--allow-empty","-m",msg)
+    else:
+        staged = _stage_card_paths(paths)
+        if not staged:
+            # 没有可 stage 的卡 paths 内容 → 空提交保住 PR 结构
+            sh("git","-C",str(WS),"-c","user.name=loop-worker",
+               "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","--allow-empty","-m",msg)
+        else:
+            # 自检：staged ⊆ 卡 paths（GLOB 匹配），越界则拒绝
+            bad = [s for s in staged if not GLOB([s], paths)]
+            if bad:
+                raise RuntimeError(f"OUT_OF_SCOPE staged (not in card paths {paths}): {bad}")
+            sh("git","-C",str(WS),"-c","user.name=loop-worker",
+               "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","-m",msg)
     br = sh("git","-C",str(WS),"rev-parse","--abbrev-ref","HEAD").stdout.strip()
     sh("git","-C",str(WS),"push","-u","origin",br,"--force-with-lease", check=True)
     if not json.loads(gh("pr","list","-R",REPO,"--head",br,"--json","number").stdout or "[]"):
@@ -232,12 +271,29 @@ def h_done(args):
     # push 残余
     if sh("git","-C",str(WS),"status","--porcelain").stdout.strip():
         do_save(f"done: {c['blk']['id']}")
-    # PR 转 ready
+    # PR 转 ready + 入 merge queue
     br = sh("git","-C",str(WS),"rev-parse","--abbrev-ref","HEAD").stdout.strip()
     prs = json.loads(gh("pr","list","-R",REPO,"--head",br,"--json","number,isDraft,state").stdout or "[]")
+    pr_num = None
     for pr in prs:
         if pr.get("isDraft"):
             gh("pr","ready",str(pr["number"]),"-R",REPO)
+        pr_num = pr["number"]
+    # 入 merge queue：gh pr merge --auto --squash。
+    # 隐藏第三坑：仓库须 allow_auto_merge=true，否则 --auto 必失败。
+    # done 在入队前自动修复该设置（admin token 场景）；非 admin 静默失败由 Finding 兜底。
+    if pr_num:
+        _ensure_auto_merge_enabled()
+        enqueue_failures = []
+        for attempt in (1, 2):  # 重试一次
+            p = gh("pr","merge",str(pr_num),"-R",REPO,"--auto","--squash")
+            if p.returncode == 0:
+                enqueue_failures = []
+                break
+            enqueue_failures.append(f"attempt {attempt}: rc={p.returncode} err={p.stderr.strip()[:300]}")
+        if enqueue_failures:
+            # 不阻断 done 结算，但留响亮痕迹：开 Finding（近因告警，canary 兜底在另一层）
+            _file_finding_for_enqueue_fail(c["num"], pr_num, br, enqueue_failures)
     # CAS 置 in_review
     blk = dict(c["blk"], state="in_review")
     it = json.loads(gh("issue","view",str(c["num"]),"-R",REPO,"--json","updatedAt").stdout)
@@ -248,6 +304,25 @@ def h_done(args):
     # 清空当前卡
     st(card=None)
     return {"stdout": "OK\n"}
+
+def _ensure_auto_merge_enabled():
+    """merge-queue 仓库须 allow_auto_merge=true，否则 gh pr merge --auto 必失败。"""
+    p = gh("api",f"/repos/{REPO}","--jq",".allow_auto_merge")
+    if p.returncode == 0 and p.stdout.strip() == "false":
+        gh("api","-X","PATCH",f"/repos/{REPO}","-F","allow_auto_merge=true")
+
+def _file_finding_for_enqueue_fail(issue_num, pr_num, br, errs):
+    """入队失败开 Finding（近因告警，不静默吞）。"""
+    msg = "PR_ENQUEUE_FAILED: " + " | ".join(errs)
+    body = (f"```json finding\n"
+            f'{{"lens":"loopd","severity":"high","message":'
+            f'"{msg.replace(chr(34), chr(92)+chr(34))}",'
+            f'"path":"PR #{pr_num} ({br})"}}\n```\n\n'
+            f"**Issue:** #{issue_num}\n**PR:** #{pr_num}\n**Branch:** `{br}`\n\n"
+            f"loopd done 把 issue 置 in_review，但 PR 未能入 merge queue。\n"
+            f"Canary 全链路是兜底；本 Finding 是近因告警，需人工介入修 PR。")
+    gh("issue","create","-R",REPO,"--title",f"[Finding] PR #{pr_num} enqueue failed",
+       "--label","finding","--body",body)
 
 # ============================================================
 # drop：删除文件
