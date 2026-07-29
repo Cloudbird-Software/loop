@@ -1,0 +1,11 @@
+# loopd/intents.yaml —— loop run <intent> 的白名单（手册 1.3 节，逐字）
+# 只收意图名，不收裸命令。未登记的意图返回 UNKNOWN_INTENT。
+intents:
+  deps.install:   ["mise", "install"]
+  deps.sync:      ["bash", ".loop/scripts/deps-sync.sh"]
+  db.reset:       ["bash", ".loop/scripts/db-reset.sh"]
+  cache.clear:    ["bash", ".loop/scripts/cache-clear.sh"]
+  port.free:      ["bash", ".loop/scripts/port-free.sh"]
+  logs.tail:      ["tail", "-n", "200", ".loop/logs/app.log"]
+  snapshot.take:  ["bash", ".loop/scripts/snapshot.sh"]
+  bench.replay:   ["bash", "bench/replay.sh"]

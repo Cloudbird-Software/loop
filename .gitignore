@@ -1,0 +1,17 @@
+# Working files not part of loop repo
+product-x/
+probe.sh
+__pycache__/
+*.pyc
+.loop/relay/inbox/
+.loop/relay/outbox/
+.loop/relay/done/
+.loop/logs/
+.loop/trash/
+.loop/audit/
+.loop/daemon.json
+.loop/OUT.md
+.loop/IN.json
+.loop/session-ended
+.loop/body.tmp
+.loop/archive/
