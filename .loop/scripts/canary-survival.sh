@@ -18,7 +18,13 @@ NOW=$(date +%s)
 ALERTS=""
 
 # 确保辅助标签存在
-gh label create "incident" -R "$ORG/$LOOP_REPO" --color b60205 --if-not-exists 2>/dev/null || true
+ensure_label() {
+  local name="$1" color="$2" repo="$3"
+  gh label create "$name" -R "$repo" --color "$color" 2>/dev/null \
+    || gh label edit "$name" -R "$repo" --color "$color" 2>/dev/null \
+    || true
+}
+ensure_label "incident" "b60205" "$ORG/$LOOP_REPO"
 
 check_wf() {
   local repo="$1" wf="$2" label="$3"

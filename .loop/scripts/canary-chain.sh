@@ -19,9 +19,15 @@ mkdir -p "$LOGDIR"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$TRACE_FILE" >&2; }
 
 # 确保辅助标签存在（issue type 由 Card 提供，label 仅作筛选辅助）
-gh label create "card"    -R "$ORG/$PRODUCT" --color 1d76db --if-not-exists 2>/dev/null || true
-gh label create "claimed" -R "$ORG/$PRODUCT" --color fbca04 --if-not-exists 2>/dev/null || true
-gh label create "done"    -R "$ORG/$PRODUCT" --color 0e8a16 --if-not-exists 2>/dev/null || true
+ensure_label() {
+  local name="$1" color="$2" repo="$3"
+  gh label create "$name" -R "$repo" --color "$color" 2>/dev/null \
+    || gh label edit "$name" -R "$repo" --color "$color" 2>/dev/null \
+    || true
+}
+ensure_label "card"    "1d76db" "$ORG/$PRODUCT"
+ensure_label "claimed" "fbca04" "$ORG/$PRODUCT"
+ensure_label "done"    "0e8a16" "$ORG/$PRODUCT"
 
 # 1. 开卡
 log "step1: open canary card $CARD_ID"

@@ -32,7 +32,7 @@ jobs:
         run: |
           set -e
           MENTION="${LOOP_HUMAN:+@$LOOP_HUMAN }"
-          gh label create "incident" -R "$LOOP_ORG/loop" --color b60205 --if-not-exists 2>/dev/null || true
+          gh label create "incident" -R "$LOOP_ORG/loop" --color b60205 2>/dev/null || true
           # 写 body 到文件，避免 YAML literal block 里多行字符串的缩进问题
           INC_BODY="$(mktemp)"
           {
