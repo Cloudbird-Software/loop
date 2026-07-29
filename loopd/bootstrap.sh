@@ -112,20 +112,21 @@ install_tool grype "https://github.com/anchore/grype/releases/latest/download/gr
 # A 包已先在 UPSTREAM.yaml 追加 opencode 条目（格式照 OPC-v4 P9）。
 # 在占位值未回填前，sha256 校验降级为"打印 actual + 警告"，不阻断 bootstrap；
 # E 包填入真实 sha256 后自动启用硬校验（不匹配即跳过安装）。
-OPENCODE_VERSION="${OPENCODE_VERSION:-v0.0.0}"                       # pin：E 包填真实 release tag
-OPENCODE_SHA256="${OPENCODE_SHA256:-PLACEHOLDER_FILL_BY_UPSTREAM}"  # 校验占位，E 包填
+OPENCODE_VERSION="${OPENCODE_VERSION:-v1.18.4}"                                            # pin：v1.18.4 (2026-07-20 发布，已过 7 天冷静期)
+OPENCODE_SHA256="${OPENCODE_SHA256:-bab463c3fb3224d388bb7cfad63f38703df9cf0be2cfd2ce8cb49d886b53a174}"  # opencode-linux-x64.tar.gz 真实 sha256
 if ! command -v opencode >/dev/null 2>&1; then
   echo "Installing opencode ${OPENCODE_VERSION}..."
-  OPENCODE_URL="https://github.com/sst/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-amd64"
-  OPENCODE_TMP="/tmp/opencode"
+  OPENCODE_URL="https://github.com/sst/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-x64.tar.gz"
+  OPENCODE_TMP="/tmp/opencode-linux-x64.tar.gz"
+  OPENCODE_EXTRACT="/tmp/opencode-extract"
   if python3 -c "import urllib.request; urllib.request.urlretrieve('${OPENCODE_URL}', '${OPENCODE_TMP}')" 2>/dev/null; then
     ACTUAL=$(sha256sum "${OPENCODE_TMP}" 2>/dev/null | awk '{print $1}' || echo "")
     if [ "${OPENCODE_SHA256}" = "PLACEHOLDER_FILL_BY_UPSTREAM" ]; then
       echo "  opencode sha256 still PLACEHOLDER — verify disabled until E package fills UPSTREAM.yaml (actual=${ACTUAL})"
-      chmod +x "${OPENCODE_TMP}" 2>/dev/null && mv "${OPENCODE_TMP}" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode move failed"
+      rm -rf "${OPENCODE_EXTRACT}" && mkdir -p "${OPENCODE_EXTRACT}" && tar xzf "${OPENCODE_TMP}" -C "${OPENCODE_EXTRACT}" 2>/dev/null && chmod +x "${OPENCODE_EXTRACT}/opencode" 2>/dev/null && mv "${OPENCODE_EXTRACT}/opencode" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode extract/move failed"
     elif [ -n "${ACTUAL}" ] && [ "${ACTUAL}" = "${OPENCODE_SHA256}" ]; then
       echo "  opencode sha256 OK (${ACTUAL})"
-      chmod +x "${OPENCODE_TMP}" 2>/dev/null && mv "${OPENCODE_TMP}" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode move failed"
+      rm -rf "${OPENCODE_EXTRACT}" && mkdir -p "${OPENCODE_EXTRACT}" && tar xzf "${OPENCODE_TMP}" -C "${OPENCODE_EXTRACT}" 2>/dev/null && chmod +x "${OPENCODE_EXTRACT}/opencode" 2>/dev/null && mv "${OPENCODE_EXTRACT}/opencode" "/usr/local/bin/opencode" 2>/dev/null || echo "  WARNING: opencode extract/move failed"
     else
       echo "  WARNING: opencode sha256 mismatch (expected ${OPENCODE_SHA256}, got ${ACTUAL}), skipping install"
     fi
