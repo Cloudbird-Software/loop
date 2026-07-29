@@ -177,6 +177,9 @@ def main():
     issues = load("issues.json", snap)
     prs = load("prs.json", snap)
     runs = load("runs.json", snap)
+    # 合并 loop 控制面 runs（含 canary/scribe/drift），使 canary 字段可见
+    loop_runs = load("loop-runs.json", snap)
+    all_runs = list(runs) + list(loop_runs)
     rule_suites = load("rule-suites.json", snap)
 
     # 1. confirm_taps
@@ -188,18 +191,18 @@ def main():
     # 3. 僵尸卡
     zombie = detect_zombie_cards(issues, ref_ts)
 
-    # 4. canary
-    canary = summarize_canary(runs, ref_ts)
+    # 4. canary（扫描 product-x + loop 控制面 runs）
+    canary = summarize_canary(all_runs, ref_ts)
 
-    # 5. 成本
-    minutes, usd, cny = compute_cost(runs)
+    # 5. 成本（合并 product-x + loop runs 的运行时长）
+    minutes, usd, cny = compute_cost(all_runs)
 
     lines = [
         f"# Daily Report — {now_str}",
         "",
         f"- issues: {len(issues)}",
         f"- prs: {len(prs)}",
-        f"- runs: {len(runs)}",
+        f"- runs: {len(runs)} (product-x) + {len(loop_runs)} (loop) = {len(all_runs)}",
         f"- rule-suites: {len(rule_suites) if isinstance(rule_suites, list) else 0}",
         "",
         "## confirm_taps",

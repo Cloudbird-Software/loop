@@ -43,8 +43,12 @@ jobs:
             jq -s 'add' journal-snapshot/reviews.tmp.json > journal-snapshot/reviews.json
             rm -f journal-snapshot/reviews.tmp.json
           fi
-          echo "=== Export workflow runs ==="
+          echo "=== Export workflow runs (product-x) ==="
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/actions/runs?per_page=100" > journal-snapshot/runs.json
+          echo "=== Export workflow runs (loop, control plane) ==="
+          # loop 仓库的 runs 含 canary/scribe/drift 等；canary 字段依赖此导出
+          gh api "/repos/$LOOP_ORG/loop/actions/runs?per_page=100" > journal-snapshot/loop-runs.json 2>/dev/null \
+            || echo '{"workflow_runs":[]}' > journal-snapshot/loop-runs.json
           echo "=== Export rule-suites (org) ==="
           gh api "/orgs/$LOOP_ORG/rule-suites?per_page=100" > journal-snapshot/rule-suites.json 2>/dev/null \
             || echo '[]' > journal-snapshot/rule-suites.json
