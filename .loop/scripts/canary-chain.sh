@@ -76,9 +76,26 @@ log "  -> PR #$PR_NUM ($PR_URL)"
 # 5. done（入 merge queue → 合并 PR → 置卡 state=done → 关 issue）
 log "step5: enqueue merge queue + done"
 # product-x 的 main 启用了 merge queue，gh pr merge / --admin 均被拒（"Changes must be made through the merge queue"）。
-# 正确路径：GraphQL enqueuePullRequest 入队，merge queue 自动按配置（squash）合并。
-PR_NODE_ID=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json id --jq '.id')
-ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1)
+# 正确路径：等 PR mergeable → GraphQL enqueuePullRequest 入队 → merge queue 自动按配置（squash）合并。
+PR_NODE_ID=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json id --jq '.id' 2>/dev/null)
+if [ -z "$PR_NODE_ID" ]; then
+  log "  -> FAIL: cannot resolve PR node id for #$PR_NUM"
+  echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (no node id)" >&2
+  exit 1
+fi
+# 等 PR 变 MERGEABLE（刚创建时 mergeable=UNKNOWN，merge queue 拒绝入队）
+MERGEABLE_OK=0
+for i in $(seq 1 20); do
+  MB=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json mergeable --jq '.mergeable' 2>/dev/null || echo "")
+  if [ "$MB" = "MERGEABLE" ]; then
+    MERGEABLE_OK=1
+    break
+  fi
+  sleep 3
+done
+log "  -> mergeable=$MB (ok=$MERGEABLE_OK) after ${i} polls"
+# 入队（不因 gh 错误而中断 set -e）
+ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1) || true
 log "  -> enqueue result: $ENQ"
 # 等待合并生效（merge queue 处理 + 状态检查），最多轮询 150 秒
 MERGED_OK=0
