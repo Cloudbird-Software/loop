@@ -12,9 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: policy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: t
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with: {app-id: "${{ secrets.POLICY_W_APP_ID }}", private-key: "${{ secrets.POLICY_W_APP_KEY }}", owner: "${{ github.repository_owner }}"}
       - name: Apply ruleset from settings/*.json
         env:

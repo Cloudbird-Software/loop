@@ -238,6 +238,37 @@ else
 fi
 
 # ============================================================
+# Stage F static checks (pinact / pinned SHAs)
+# ============================================================
+echo ""
+echo "=== Stage F: pinned-SHA checks ==="
+
+# f-a. every uses: line pins a 40-char SHA (offline proxy for pinact run --check)
+F_A=1
+while IFS= read -r line; do
+  # extract the action ref after "uses:" up to the comment
+  ref=$(printf '%s' "$line" | sed -E 's/.*uses:[[:space:]]*//; s/[[:space:]]*#.*//')
+  sha=$(printf '%s' "$ref" | sed -E 's/.*@//')
+  if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo "  FAIL: unpinned uses -> $line"
+    F_A=0
+  fi
+done < <(grep -rhE 'uses:' "${REPO_ROOT}/.github/workflows/" 2>/dev/null)
+if [ "${F_A}" = "1" ]; then pass "f-a. all uses: pinned to 40-char SHA"; else fail "f-a. unpinned uses: found"; fi
+
+# f-b. pinact run --check if available + token present
+if command -v pinact >/dev/null 2>&1 && [ -n "${GITHUB_TOKEN:-${GH_TOKEN:-}}" ]; then
+  if pinact run --check 2>&1; then
+    pass "f-b. pinact run --check green"
+  else
+    fail "f-b. pinact run --check found issues"
+  fi
+else
+  echo "  (pinact or token not available, skipping f-b; f-a is the offline gate)"
+  pass "f-b. pinact run --check (skipped)"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
