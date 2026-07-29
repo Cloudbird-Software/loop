@@ -244,7 +244,7 @@ LOG="${GHSHIM_LOG:-/tmp/ghshim.log}"
 echo "gh $*" >> "$LOG"
 case "$1 $2" in
   "pr merge")
-    echo "  (shim) would enqueue PR $4 --auto --squash"
+    echo "  (shim) would enqueue PR $4 --squash (direct, no --auto)"
     exit 0
     ;;
   "pr list")
@@ -252,6 +252,11 @@ case "$1 $2" in
     exit 0
     ;;
   "pr ready")
+    exit 0
+    ;;
+  "pr view")
+    # done 二次确认入队状态：返回 QUEUED 让逻辑判定已入队
+    echo '{"state":"OPEN","mergeStateStatus":"QUEUED"}'
     exit 0
     ;;
   "api")
@@ -302,13 +307,13 @@ out = loopd.h_done([])
 PY
 H1_RC=$?
 if [ "${H1_RC}" = "0" ]; then
-  if grep -q "pr merge" "${TMPROOT}/ghshim.log" 2>/dev/null && grep -q -- "--auto" "${TMPROOT}/ghshim.log" 2>/dev/null; then
-    pass "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+  if grep -q "pr merge" "${TMPROOT}/ghshim.log" 2>/dev/null && grep -q -- "--squash" "${TMPROOT}/ghshim.log" 2>/dev/null; then
+    pass "h1. done calls gh pr merge --squash (direct enqueue, merge-queue scenario)"
   else
-    fail "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+    fail "h1. done calls gh pr merge --squash (direct enqueue, merge-queue scenario)"
   fi
 else
-  fail "h1. done calls gh pr merge --auto --squash (merge-queue scenario)"
+  fail "h1. done calls gh pr merge --squash (direct enqueue, merge-queue scenario)"
 fi
 rm -f "${TMPROOT}/ghshim.log"
 

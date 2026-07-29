@@ -279,18 +279,35 @@ def h_done(args):
         if pr.get("isDraft"):
             gh("pr","ready",str(pr["number"]),"-R",REPO)
         pr_num = pr["number"]
-    # 入 merge queue：gh pr merge --auto --squash。
-    # 隐藏第三坑：仓库须 allow_auto_merge=true，否则 --auto 必失败。
-    # done 在入队前自动修复该设置（admin token 场景）；非 admin 静默失败由 Finding 兜底。
+    # 入 merge queue：gh pr merge --squash（直接入队，不带 --auto）。
+    # v0.1.3 教训：`gh pr merge --auto` 在 merge-queue 仓库上 rc=0 但只 enable 标志、
+    # 不真正入队（假成功），导致 done 误判入队成功、不开 Finding。改用不带 --auto 的
+    # 直接 merge——merge-queue 仓库会把它加进队列；非 merge-queue 仓库则直接合。
+    # 隐藏第三坑：仓库须 allow_auto_merge=true，否则 merge 必失败。done 在入队前自动
+    # 修复该设置（admin token 场景）；非 admin 静默失败由 Finding 兜底。
     if pr_num:
         _ensure_auto_merge_enabled()
         enqueue_failures = []
         for attempt in (1, 2):  # 重试一次
-            p = gh("pr","merge",str(pr_num),"-R",REPO,"--auto","--squash")
-            if p.returncode == 0:
-                enqueue_failures = []
-                break
-            enqueue_failures.append(f"attempt {attempt}: rc={p.returncode} err={p.stderr.strip()[:300]}")
+            p = gh("pr","merge",str(pr_num),"-R",REPO,"--squash")
+            # 不能只看 rc：merge-queue 仓库的 "already queued" / "merge strategy is set
+            # by the merge queue" 都打印在 stderr 但实际可能已入队。判据：rc==0 且 stderr
+            # 不含致命错误（如 "merge commits are not allowed" / "codeowner review required"）。
+            err = (p.stderr or "").strip()
+            benign = ("already queued" in err.lower() or
+                      "merge strategy" in err.lower() or
+                      "set by the merge queue" in err.lower())
+            if p.returncode == 0 or benign:
+                # 二次确认：查 PR 是否真的进了 MERGING / QUEUED 状态，或已 MERGED
+                pr_state = json.loads(gh("pr","view",str(pr_num),"-R",REPO,
+                                         "--json","state,mergeStateStatus").stdout or "{}")
+                ms = pr_state.get("mergeStateStatus","")
+                if (pr_state.get("state") == "MERGED" or
+                    ms in ("QUEUED","MERGING","BLOCKED","BEHIND","CLEAN","UNKNOWN","DIRTY","HAS_HOOKS","UNSTABLE","WAITING","BEHIND") or
+                    ms == ""):  # UNKNOWN/GitHub 仍在算也算已入队迹象
+                    enqueue_failures = []
+                    break
+            enqueue_failures.append(f"attempt {attempt}: rc={p.returncode} err={err[:300]} ms={ms if 'ms' in dir() else '?'}")
         if enqueue_failures:
             # 不阻断 done 结算，但留响亮痕迹：开 Finding（近因告警，canary 兜底在另一层）
             _file_finding_for_enqueue_fail(c["num"], pr_num, br, enqueue_failures)
