@@ -26,9 +26,18 @@ def load(name, snap_dir):
     if not p.exists():
         return []
     try:
-        return json.loads(p.read_text())
+        data = json.loads(p.read_text())
     except Exception:
         return []
+    # GitHub API 常把列表包在对象里：{"workflow_runs":[...]}, {"rule_suites":[...]}
+    if isinstance(data, dict):
+        for key in ("workflow_runs", "rule_suites", "items", "value"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+        return []
+    if isinstance(data, list):
+        return data
+    return []
 
 
 def load_text(name, snap_dir):
@@ -160,9 +169,9 @@ def main():
         try:
             ref_ts = float(ref_env)
         except ValueError:
-            ref_ts = datetime.datetime.utcnow().timestamp()
+            ref_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
     else:
-        ref_ts = datetime.datetime.utcnow().timestamp()
+        ref_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
     now_str = datetime.datetime.fromtimestamp(ref_ts, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     issues = load("issues.json", snap)
