@@ -144,18 +144,30 @@ def summarize_canary(runs, ref_ts):
 def compute_cost(runs):
     """成本估算：Actions 运行分钟数 × 公开单价。
 
-    无 billing API 权限时，用 workflow runs 的 run_duration_ms 累加估算。
-    返回 (minutes, usd, cny)。
+    GitHub /actions/runs 不返回 run_duration_ms，故由 updated_at - run_started_at 推算。
+    无 billing API 权限时，用此确定性估算。返回 (minutes, usd, cny)。
     """
-    total_ms = 0
+    total_seconds = 0
     for r in runs or []:
-        dur = r.get("run_duration_ms") or r.get("duration_ms")
-        if dur:
+        # 优先用显式 duration 字段（若有），否则由时间戳推算
+        dur_ms = r.get("run_duration_ms") or r.get("duration_ms")
+        if dur_ms:
             try:
-                total_ms += float(dur)
+                total_seconds += float(dur_ms) / 1000.0
+                continue
             except (TypeError, ValueError):
                 pass
-    minutes = total_ms / 60000.0
+        start = r.get("run_started_at") or r.get("created_at")
+        end = r.get("updated_at")
+        if start and end:
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                s = _dt.fromisoformat(start.replace("Z", "+00:00"))
+                e = _dt.fromisoformat(end.replace("Z", "+00:00"))
+                total_seconds += max(0.0, (e - s).total_seconds())
+            except Exception:
+                pass
+    minutes = total_seconds / 60.0
     usd = minutes * ACTIONS_RATE_USD_PER_MIN
     cny = usd * USD_TO_CNY
     return minutes, usd, cny
