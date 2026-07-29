@@ -73,20 +73,29 @@ PR_URL=$(gh pr create -R "$ORG/$PRODUCT" --head "$BRANCH" --base main \
 PR_NUM=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 log "  -> PR #$PR_NUM ($PR_URL)"
 
-# 5. done（合并 PR + 置卡 state=done + 关 issue）
-log "step5: merge PR + done"
-# admin 合并绕过 branch protection + merge queue（canary 是合成工单，无需 review）
-# 注意：--delete-branch 与 merge queue 不兼容，故合并后单独删分支
-if ! gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash --admin >/dev/null 2>&1; then
-  log "  -> admin merge failed, try plain squash merge"
-  gh pr merge "$PR_NUM" -R "$ORG/$PRODUCT" --squash >/dev/null
-fi
-# 等待合并生效（merge queue 可能延迟），最多轮询 60 秒
-for i in $(seq 1 30); do
-  PR_MERGED=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json merged --jq '.merged' 2>/dev/null || echo false)
-  [ "$PR_MERGED" = "true" ] && break
-  sleep 2
+# 5. done（入 merge queue → 合并 PR → 置卡 state=done → 关 issue）
+log "step5: enqueue merge queue + done"
+# product-x 的 main 启用了 merge queue，gh pr merge / --admin 均被拒（"Changes must be made through the merge queue"）。
+# 正确路径：GraphQL enqueuePullRequest 入队，merge queue 自动按配置（squash）合并。
+PR_NODE_ID=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json id --jq '.id')
+ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1)
+log "  -> enqueue result: $ENQ"
+# 等待合并生效（merge queue 处理 + 状态检查），最多轮询 150 秒
+MERGED_OK=0
+for i in $(seq 1 50); do
+  PR_STATE=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json state --jq '.state' 2>/dev/null || echo "")
+  if [ "$PR_STATE" = "MERGED" ]; then
+    MERGED_OK=1
+    break
+  fi
+  sleep 3
 done
+if [ "$MERGED_OK" -ne 1 ]; then
+  log "  -> GATE FAIL: PR #$PR_NUM not merged within 150s (last state=$PR_STATE)"
+  echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (merge timeout)" >&2
+  exit 1
+fi
+log "  -> PR #$PR_NUM merged"
 # 清理 canary 分支（合并后）
 git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
 DONE_BODY='```json loop
@@ -99,8 +108,8 @@ log "  -> done, issue closed"
 # 6. 关卡（回读 issue 确认 state=done + PR 已合并）
 log "step6: gate check"
 FINAL_BODY=$(gh issue view "$NUM" -R "$ORG/$PRODUCT" --json body --jq '.body')
-PR_STATE=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json state,merged --jq '.state + "/" + (.merged|tostring)')
-if printf '%s' "$FINAL_BODY" | grep -q '"state":"done"' && printf '%s' "$PR_STATE" | grep -q "MERGED/true"; then
+PR_STATE=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json state --jq '.state')
+if printf '%s' "$FINAL_BODY" | grep -q '"state":"done"' && [ "$PR_STATE" = "MERGED" ]; then
   log "  -> GATE PASS: card done + PR merged"
   gh issue comment "$NUM" -R "$ORG/$PRODUCT" --body "canary chain PASS $DATE_TAG — pr=#$PR_NUM merged, card=done" >/dev/null
   echo "CANARY_CHAIN_OK issue=#$NUM pr=#$PR_NUM card=$CARD_ID"
