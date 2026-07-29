@@ -4,7 +4,7 @@
 手册第 5 部分骨架 + 全部 intent 补完。
 5.1–5.4 给出的函数逐字采用；缺失 handler 按同一 @intent 模式最小实现。
 """
-import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re
+import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime
 
 # ============================================================
 # 全局常量（手册 5.1）
@@ -653,6 +653,62 @@ def autosave_thread():
         time.sleep(int(E["LOOP_AUTOSAVE_SEC"]))
 
 # ============================================================
+# 僵尸回收（手册 6.1 第1件事本地化，v0.1.5 新增）
+# ============================================================
+def _iso_to_ts(s):
+    try: return datetime.datetime.fromisoformat(str(s).replace("Z","+00:00")).timestamp()
+    except Exception: return 0.0
+
+def reap_once():
+    """僵尸回收单次扫描：lease 过期且 lease 期内无新 commit 的 claimed/in_progress
+    卡退回 ready（attempt+=1，清 claim_id/sandbox/lease/heartbeat）。返回回收列表。
+
+    原依赖外部 conductor/tick.py（cron */5），但 GitHub 对高频 cron 严重限流
+    （实测 4h 只跑 2 次），沙盒被 kill 留下的 claimed 卡永远卡住、新沙盒取不到。
+    搬进 loopd 自治，用沙盒自身 GH_TOKEN（填写卡已要求 Issues:write）。
+    并发去重靠 write_block 的 CAS（updatedAt 不匹配即放弃，多沙盒同时扫只有一个成功）。
+    """
+    now = int(time.time())
+    lease_min = int(E.get("LOOP_LEASE_MIN", "45"))
+    reclaimed = []
+    for it, blk in cards(("claimed", "in_progress")):
+        if blk.get("lease_until", 0) > now: continue
+        cid = blk.get("id", "")
+        # lease 期内有新 commit → 沙盒还在干活（autosave 在推），不回收
+        lease_start_ts = blk.get("lease_until", 0) - lease_min*60
+        has_commit = False
+        if cid:
+            p = gh("pr","list","-R",REPO,"--head",
+                   f'{E["LOOP_BRANCH_PREFIX"]}/{cid}',"--state","open",
+                   "--json","number,updatedAt")
+            try:
+                for pr in json.loads(p.stdout or "[]"):
+                    if _iso_to_ts(pr.get("updatedAt","")) > lease_start_ts:
+                        has_commit = True; break
+            except Exception:
+                pass
+        if has_commit: continue
+        new = dict(blk)
+        new["state"] = "ready"
+        new["attempt"] = blk.get("attempt", 0) + 1
+        new.pop("claim_id", None)
+        new.pop("sandbox", None)
+        new.pop("lease_until", None)
+        new.pop("heartbeat_at", None)
+        if write_block(it["number"], new, it["updatedAt"]):
+            reclaimed.append((it["number"], cid, new["attempt"]))
+            print(f"[reaper] #{it['number']} ({cid}) reclaimed "
+                  f"(attempt={new['attempt']})", flush=True)
+    return reclaimed
+
+def reaper_thread():
+    while True:
+        try: reap_once()
+        except Exception as e:
+            print(f"[reaper] error: {e}", flush=True)
+        time.sleep(int(E.get("LOOP_REAPER_SEC", "60")))
+
+# ============================================================
 # 主循环（手册 5.1）
 # ============================================================
 def main():
@@ -660,8 +716,15 @@ def main():
     for d in [LOOP, RELAY/"inbox", RELAY/"outbox", RELAY/"done",
               LOOP/"logs", LOOP/"trash", LOOP/"audit", LOOP/"plan"]:
         d.mkdir(parents=True, exist_ok=True)
-    st()  # 初始化
-    for t in (relay_thread, heartbeat_thread, autosave_thread, filemode_thread):
+    d = st()  # 初始化（加载已有 daemon.json 或建新）
+    # v0.1.5 Fix A：新进程启动若无活跃卡，重置会话配额。
+    # 场景：上一会话被中断（没调 loop retire），daemon.json 残留 session_ordinal，
+    # 续跑配额被"幽灵消耗"（曾表现为沙盒只跑 2 张卡就 retire）。新启动=新会话。
+    # 若有活跃卡（崩溃恢复中）则保留 ordinal，让 agent 续完。
+    if not d.get("card"):
+        st(session_ordinal=0, started=time.time())
+    for t in (relay_thread, heartbeat_thread, autosave_thread,
+              filemode_thread, reaper_thread):
         threading.Thread(target=t, daemon=True).start()
     while True:
         time.sleep(3600)

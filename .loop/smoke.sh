@@ -454,6 +454,99 @@ else
 fi
 
 # ============================================================
+# Stage I: reaper (zombie reclaim, v0.1.5)
+# ============================================================
+echo ""
+echo "=== Stage I: reaper (zombie reclaim) ==="
+STAGE_I_OUT=$(python3 - <<'PY'
+import os, sys, types, json, time, datetime
+os.environ["LOOP_ROOT"]="/tmp/loopd-smoke-i"
+os.environ["LOOP_WS"]="/tmp/loopd-smoke-i/ws"
+os.environ["LOOP_ORG"]="test-org"
+os.environ["LOOP_REPO"]="test-repo"
+os.environ["LOOP_ROLE"]="impl"
+os.environ["LOOP_MODEL"]="test-model"
+os.environ["LOOP_SANDBOX_ID"]="smoke-i"
+os.environ["LOOP_BRANCH_PREFIX"]="agent"
+os.environ["LOOP_LEASE_MIN"]="45"
+os.environ["LOOP_POLL_MS"]="100"
+os.environ["LOOP_HEARTBEAT_SEC"]="999"
+os.environ["LOOP_AUTOSAVE_SEC"]="999"
+os.environ["LOOP_NEXT_BLOCK_SEC"]="5"
+os.environ["LOOP_MAX_CARDS_PER_SESSION"]="6"
+os.environ["LOOP_IO_MODE"]="shim"
+os.environ["GH_TOKEN"]="dummy"
+sys.path.insert(0, os.environ.get("SMOKE_LOOPD","/workspace/loopd"))
+import loopd
+
+class FakeProc:
+    def __init__(self, stdout="", stderr="", rc=0):
+        self.stdout=stdout; self.stderr=stderr; self.returncode=rc
+
+def issue_it(num, blk):
+    body = "```json loop\n" + json.dumps(blk) + "\n```\n## Body"
+    return {"number":num,"title":"[Card]","updatedAt":"TS","labels":[],"body":body}
+
+def claim_blk(cid, state, lease_until):
+    return {"id":cid,"state":state,"tier":"trivial","role":"impl","paths":["z/**"],
+            "attempt":0,"claim_id":"impl-1-dead","sandbox":"impl-1",
+            "lease_until":lease_until,"heartbeat_at":1}
+
+NOW = int(time.time())
+results = []
+
+# i1: expired lease + no commit → reclaimed (state=ready, attempt=1, fields cleared)
+b1 = claim_blk("z1","claimed",1)
+loopd.cards = lambda states: [(issue_it(77, b1), b1)]
+loopd.gh = lambda *a, **kw: FakeProc("[]")
+rec=[]; loopd.write_block = lambda n,b,t: (rec.append((n,b)),True)[1]
+loopd.reap_once()
+ok1 = (len(rec)==1 and rec[0][0]==77 and rec[0][1]["state"]=="ready"
+       and rec[0][1]["attempt"]==1 and "claim_id" not in rec[0][1]
+       and "sandbox" not in rec[0][1] and "lease_until" not in rec[0][1]
+       and "heartbeat_at" not in rec[0][1])
+results.append(("i1 reclaimed expired-lease zombie", ok1, rec))
+
+# i2: lease still valid → NOT reclaimed
+b2 = claim_blk("z2","claimed",NOW+9999)
+loopd.cards = lambda states: [(issue_it(78, b2), b2)]
+rec=[]; loopd.write_block = lambda n,b,t: (rec.append((n,b)),True)[1]
+loopd.reap_once()
+results.append(("i2 skips live-lease card", len(rec)==0, rec))
+
+# i3: expired lease but PR has new commit (after lease start) → NOT reclaimed
+lease3 = NOW - 100
+b3 = claim_blk("z3","claimed",lease3)
+loopd.cards = lambda states: [(issue_it(79, b3), b3)]
+lease_start = lease3 - 45*60
+upd = datetime.datetime.utcfromtimestamp(lease_start+50).strftime("%Y-%m-%dT%H:%M:%SZ")
+loopd.gh = lambda *a, **kw: FakeProc(json.dumps([{"number":9,"updatedAt":upd}]))
+rec=[]; loopd.write_block = lambda n,b,t: (rec.append((n,b)),True)[1]
+loopd.reap_once()
+results.append(("i3 skips zombie with recent commit", len(rec)==0, rec))
+
+# i4: in_progress state also reaped (not just claimed)
+b4 = claim_blk("z4","in_progress",1)
+loopd.cards = lambda states: [(issue_it(80, b4), b4)]
+loopd.gh = lambda *a, **kw: FakeProc("[]")
+rec=[]; loopd.write_block = lambda n,b,t: (rec.append((n,b)),True)[1]
+loopd.reap_once()
+results.append(("i4 reaps in_progress zombie too",
+                len(rec)==1 and rec[0][1]["state"]=="ready", rec))
+
+for name, ok, detail in results:
+    print(("PASS " if ok else "FAIL ")+name+("" if ok else f" :: {detail}"))
+print("STAGE_I_" + ("OK" if all(r[1] for r in results) else "FAIL"))
+PY
+)
+echo "${STAGE_I_OUT}"
+if echo "${STAGE_I_OUT}" | grep -q "STAGE_I_OK" && ! echo "${STAGE_I_OUT}" | grep -q "FAIL"; then
+  pass "i. reaper reclaims expired zombies, skips live/recent-commit"
+else
+  fail "i. reaper reclaims expired zombies, skips live/recent-commit"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""

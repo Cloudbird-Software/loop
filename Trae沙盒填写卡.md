@@ -1,9 +1,13 @@
-# Trae 沙盒填写卡（loop v0.1.4）
+# Trae 沙盒填写卡（loop v0.1.5）
 
 > 本卡对应手册第 2.2 节七个槽位的逐字段值。建沙盒时按本卡照填即可。
-> 两个关键哈希已由 loop 仓库 v0.1.4 计算填入，无需再算：
-> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.4 的 git tree sha；v0.1.4 未动 prompts/，故与 v0.1.2 一致）
-> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.4 的 sha256；v0.1.4 未动 bootstrap，故与 v0.1.1 一致）
+> 两个关键哈希已由 loop 仓库 v0.1.5 计算填入，无需再算：
+> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.5 的 git tree sha；v0.1.5 未动 prompts/，故与 v0.1.2 一致）
+> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.5 的 sha256；v0.1.5 未动 bootstrap，故与 v0.1.1 一致）
+>
+> **v0.1.5 变更**（相对 v0.1.4）：只动了 `loopd/loopd.py` + `.loop/smoke.sh`，未动 `bootstrap.sh` / `prompts/`，故两个 SHA 不变。
+> - **Fix A**：loopd 启动时若无活跃卡，重置 `session_ordinal`（防"幽灵配额"——上一会话被中断没 retire 时，续跑只跑 2 张就 retire 的 bug）。
+> - **Fix B**：僵尸回收线程 `reaper_thread` 搬进 loopd 自治（每 60s 扫 lease 过期的 claimed/in_progress 卡退回 ready）。原依赖外部 conductor cron，但 GitHub 对 `*/5` 高频 cron 严重限流（实测 4h 只跑 2 次），沙盒被 kill 留下的僵尸卡永远卡住。现在沙盒用自身 GH_TOKEN 自愈。
 
 ---
 
@@ -37,8 +41,9 @@ LOOP_MAX_CARDS_PER_SESSION=6
 LOOP_LEASE_MIN=45
 LOOP_HEARTBEAT_SEC=60
 LOOP_AUTOSAVE_SEC=180
+LOOP_REAPER_SEC=60                       # v0.1.5：僵尸回收扫描间隔（默认 60s，可不填）
 LOOP_BRANCH_PREFIX=agent
-LOOP_BOOTSTRAP_REF=v0.1.4                # bootstrap 的 pin
+LOOP_BOOTSTRAP_REF=v0.1.5                # bootstrap 的 pin
 LOOP_PROMPTS_SHA=979736b02639621256599db21f0352d2f0fc5bbe
 GH_HOST=github.com
 GIT_TERMINAL_PROMPT=0
@@ -124,12 +129,12 @@ loop status; echo; echo "=== waiting for: loop next ==="
 
 ---
 
-### 附：两个 SHA 的复核命令（push 完 v0.1.4 后可随时验）
+### 附：两个 SHA 的复核命令（push 完 v0.1.5 后可随时验）
 
 ```bash
 # LOOP_PROMPTS_SHA（应输出 979736b02639621256599db21f0352d2f0fc5bbe）
-gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.4:prompts --jq .sha
+gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.5:prompts --jq .sha
 
 # LOOP_BOOTSTRAP_SHA256（应输出 601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  -）
-curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.4/loopd/bootstrap.sh | sha256sum
+curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.5/loopd/bootstrap.sh | sha256sum
 ```
