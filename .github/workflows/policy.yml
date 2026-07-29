@@ -1,0 +1,33 @@
+name: policy
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "apply or dry-run"
+        required: true
+        default: "dry-run"
+permissions: {contents: read}
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: policy
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.POLICY_W_APP_ID }}", private-key: "${{ secrets.POLICY_W_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+      - name: Apply ruleset from settings/*.json
+        env:
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -e
+          if [ "$ACTION" = "dry-run" ]; then
+            echo "DRY RUN: would apply settings/main-protection.json to org ruleset"
+            cat settings/main-protection.json
+          else
+            echo "APPLYING ruleset (environment: policy, required reviewers approved)"
+            # TODO: gh api -X PUT /orgs/$LOOP_ORG/rulesets/<id> --input settings/main-protection.json
+            echo "TODO: implement apply logic"
+          fi

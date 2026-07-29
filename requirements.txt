@@ -1,0 +1,3 @@
+# requirements.txt — conductor scripts use Python stdlib only (no external deps).
+# pip install --require-hashes -r requirements.txt is a no-op with this file.
+# If deps are added later, generate hashes with: pip-compile --generate-hashes

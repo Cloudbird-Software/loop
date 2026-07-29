@@ -1,0 +1,17 @@
+# settings/environments.yml — GitHub Actions environments used by loop workflows
+#
+# These are documentation; actual environments are created in GitHub repo settings.
+
+environments:
+  policy:
+    description: "Apply ruleset changes (policy-writer app). Required reviewers = org owner."
+    workflows: [policy.yml]
+
+  eval:
+    description: "Nightly promptfoo llm-rubric. Uses LLM_GATEWAY_KEY secret."
+    workflows: [nightly-rubric.yml]
+
+  production:
+    description: "Production deployments (W6). Required reviewers = org owner. Prevent self-review OFF."
+    workflows: []
+    deploy_branch: main

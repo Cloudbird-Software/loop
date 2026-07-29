@@ -1,0 +1,29 @@
+name: canary
+on:
+  schedule: [{cron: "0 * * * *"}]
+  workflow_dispatch:
+permissions: {contents: read, issues: write}
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+      - name: Synthetic ticket through full chain
+        env:
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          LOOP_PRODUCT: product-x
+        run: |
+          set -e
+          # 合成工单：开一张 trivial Card，走 claimed → in_progress → in_review → done 全链路
+          CANARY_BODY='```json loop
+          {"id":"canary-'$(date +%s)'","state":"ready","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0}
+          ```'
+          NUM=$(gh issue create -R "$LOOP_ORG/$LOOP_PRODUCT" --title "canary: synthetic ticket" --label "card" --body "$CANARY_BODY" | grep -o '[0-9]*')
+          echo "Created canary issue #$NUM"
+          # TODO: 模拟 claim → commit → PR → done 全链路
+          # 断链检测：如果 30 分钟内没走完 → 开 Incident
+          echo "Canary ticket #$NUM created, chain check TODO"

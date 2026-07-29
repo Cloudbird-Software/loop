@@ -1,0 +1,20 @@
+name: drift
+on:
+  schedule: [{cron: "0 */6 * * *"}]
+  workflow_dispatch:
+permissions: {contents: read, issues: write}
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.POLICY_R_APP_ID }}", private-key: "${{ secrets.POLICY_R_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+      - name: Compare live ruleset vs settings/*.json
+        env:
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set -e
+          python3 conductor/drift_check.py

@@ -1,0 +1,23 @@
+name: upgrade
+on:
+  repository_dispatch:
+    types: [wave-opened]
+  workflow_dispatch:
+permissions: {contents: read, issues: write, pull-requests: write}
+jobs:
+  upgrade-ring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+      - name: Read UPSTREAM.yaml and check cooldown
+        env:
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          LOOP_PRODUCT: product-x
+        run: |
+          set -e
+          echo "Wave opened — checking upstream dependencies..."
+          python3 conductor/upgrade_ring.py

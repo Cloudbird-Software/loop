@@ -1,0 +1,16 @@
+name: materializer
+on:
+  push:
+    branches: [main]
+    paths: ["waves/**"]
+permissions: {contents: read}
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}"}
+      - run: python conductor/materialize.py waves/
+        env: {GH_TOKEN: "${{ steps.t.outputs.token }}"}

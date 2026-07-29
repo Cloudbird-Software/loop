@@ -1,0 +1,20 @@
+name: conductor
+on:
+  schedule: [{cron: "*/5 * * * *"}]
+  repository_dispatch: {types: [loop-tick]}
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency: {group: conductor, cancel-in-progress: false}
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: t
+        uses: actions/create-github-app-token@v1
+        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+      - run: pip install --require-hashes -r requirements.txt
+      - run: python conductor/tick.py
+        env:
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          LOOP_POLICY: policy.yml

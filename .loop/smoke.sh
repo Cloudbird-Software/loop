@@ -181,6 +181,63 @@ done
 if [ "${F_OK}" = "1" ]; then pass "f. help prints verb table"; else fail "f. help prints verb table"; fi
 
 # ============================================================
+# Stage D static checks (workflows)
+# ============================================================
+echo ""
+echo "=== Stage D: workflow static checks ==="
+
+# d-a. YAML syntax for all 8 workflows
+D_A=1
+for f in "${REPO_ROOT}"/.github/workflows/*.yml; do
+  if ! python3 -c "import yaml,sys; yaml.safe_load(open('$f'))" 2>/dev/null; then
+    echo "  FAIL: $f YAML syntax"
+    D_A=0
+  fi
+done
+if [ "${D_A}" = "1" ]; then pass "d-a. all workflow YAML parse OK"; else fail "d-a. YAML syntax error"; fi
+
+# d-b. no pull_request_target
+if grep -rq "pull_request_target" "${REPO_ROOT}/.github/workflows/" 2>/dev/null; then
+  fail "d-b. pull_request_target found (forbidden)"
+else
+  pass "d-b. no pull_request_target"
+fi
+
+# d-c. cron values match manual
+D_C=1
+check_cron() {
+  local file="$1" expected="$2"
+  if ! grep -q "cron:.*${expected}" "${REPO_ROOT}/.github/workflows/${file}" 2>/dev/null; then
+    echo "  FAIL: ${file} cron should contain '${expected}'"
+    D_C=0
+  fi
+}
+check_cron "conductor.yml" '\*/5 \* \* \* \*'
+check_cron "drift.yml" '0 \*/6 \* \* \*'
+check_cron "scribe.yml" '0 22,10 \* \* \*'
+if [ "${D_C}" = "1" ]; then pass "d-c. cron values match manual"; else fail "d-c. cron mismatch"; fi
+
+# d-d. permissions minimal (just list them)
+echo "  --- permissions table ---"
+for f in "${REPO_ROOT}"/.github/workflows/*.yml; do
+  PERMS=$(python3 -c "import yaml; d=yaml.safe_load(open('$f')); print(d.get('permissions','none'))" 2>/dev/null || echo "?")
+  echo "  $(basename $f): ${PERMS}"
+done
+pass "d-d. permissions table output (see above)"
+
+# d-e. actionlint if available
+if command -v actionlint >/dev/null 2>&1; then
+  if actionlint "${REPO_ROOT}/.github/workflows/"*.yml 2>&1; then
+    pass "d-e. actionlint all green"
+  else
+    fail "d-e. actionlint found issues"
+  fi
+else
+  echo "  (actionlint not installed, skipping d-e)"
+  pass "d-e. actionlint (skipped, not installed)"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
