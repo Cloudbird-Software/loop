@@ -46,8 +46,11 @@ def intent(name):
 # ============================================================
 # 卡片工具（手册 5.3）
 # ============================================================
-GLOB = lambda a, b: any(fnmatch.fnmatch(x.rstrip("/*"), y.rstrip("/*")) or
-                        fnmatch.fnmatch(y.rstrip("/*"), x.rstrip("/*")) for x in a for y in b)
+# v0.1.6: 旧版用 rstrip("/*") 归一化目录字面量，但 rstrip 是字符集剥离，
+# 把 'e2/handoff/**' 误剥成字面量 'e2/handoff'（通配符全丢），导致 dir/** 的卡
+# loop save 提交子文件时误报 OUT_OF_SCOPE。改直接 fnmatch：Python fnmatch 的 *
+# 跨 /（不像 shell glob），** 等价于 * 也能匹配多级子文件。
+GLOB = lambda a, b: any(fnmatch.fnmatch(x, y) or fnmatch.fnmatch(y, x) for x in a for y in b)
 
 def cards(states):
     q = gh("issue","list","-R",REPO,"--state","open","--limit","100",

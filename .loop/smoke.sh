@@ -229,6 +229,41 @@ export PATH="${PATH#${DEPLOY}/bin:}"
 unset LOOPD_INTENTS_PATH
 
 # ============================================================
+# Stage G2: GLOB path-match regression (v0.1.6, dir/** wildcard fix)
+# ============================================================
+echo ""
+echo "=== Stage G2: GLOB path-match (v0.1.6 dir/** fix) ==="
+G2G_OUT=$(python3 - <<'PY'
+import sys, fnmatch
+sys.path.insert(0, "/workspace/loopd")
+import loopd
+G = loopd.GLOB
+cases = [
+    # (staged, card_paths, expected, label)
+    ("e2/handoff/MARKER.md", ["e2/handoff/**"], True,  "dir/** matches subdir file (the v0.1.6 bug)"),
+    ("e2/handoff/MARKER.md", ["e2/handoff/*"],  True,  "dir/* matches subdir file"),
+    ("e2/handoff/sub/a.md",  ["e2/handoff/**"], True,  "dir/** matches multi-level subdir file"),
+    ("LICENSE",              ["LICENSE"],       True,  "single file path (W1-style, regression guard)"),
+    ("other/x",              ["e2/handoff/**"], False, "out-of-scope rejected (no false-positive)"),
+    ("e2/handoff",          ["e2/handoff/**"], False, "dir literal not matched by dir/** (fnmatch matches whole string)"),
+]
+results = []
+for staged, paths, expected, label in cases:
+    actual = G([staged], paths)
+    ok = (actual == expected)
+    results.append(ok)
+    print(("PASS " if ok else "FAIL ")+f"{label}: GLOB([{staged!r}], {paths!r}) = {actual} (expected {expected})")
+print("STAGE_G2_" + ("OK" if all(results) else "FAIL"))
+PY
+)
+echo "${G2G_OUT}"
+if echo "${G2G_OUT}" | grep -q "STAGE_G2_OK" && ! echo "${G2G_OUT}" | grep -q "FAIL"; then
+  pass "g2. GLOB matches dir/** wildcards (v0.1.6 fix)"
+else
+  fail "g2. GLOB matches dir/** wildcards (v0.1.6 fix)"
+fi
+
+# ============================================================
 # Stage H: done auto-merge + save path-scope regression
 # ============================================================
 echo ""
