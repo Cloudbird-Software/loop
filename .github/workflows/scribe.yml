@@ -28,7 +28,10 @@ jobs:
           gh pr list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 \
             --json number,title,state,createdAt,mergedAt,headRefName > journal-snapshot/prs.json
           echo "=== Export issue comments ==="
-          gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/comments" --paginate > journal-snapshot/comments.json
+          # 注意端点：/repos/{o}/{r}/comments 是 commit 评论（给 git blame 用的），
+          # issue 评论在 /repos/{o}/{r}/issues/comments。旧版写错成 /comments，
+          # 导致 journal 的 comments.json 一直是空的，E3 journal 还原无法找回被删评论。
+          gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/issues/comments" --paginate > journal-snapshot/comments.json
           echo "=== Export PR review comments ==="
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/pulls/comments" --paginate > journal-snapshot/pr-comments.json
           echo "=== Export reviews (per-PR) ==="
