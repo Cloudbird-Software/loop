@@ -252,7 +252,7 @@ def main():
         f"- estimated USD: ${usd:.4f}",
         f"- estimated CNY: ¥{cny:.4f}",
         f"- rate: ${ACTIONS_RATE_USD_PER_MIN}/min (Linux 2-core public price), 1 USD = {USD_TO_CNY} CNY",
-        "- 注：本字段为确定性估算（runs.run_duration_ms 累加），非真实账单；真实账单待 billing API 接入后替换。",
+        "- 注：本字段为确定性估算（updated_at − run_started_at 累加），非真实账单；真实账单待 billing API 接入后替换。",
     ]
 
     print("\n".join(lines))
