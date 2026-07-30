@@ -1,6 +1,12 @@
-# cards/ — 暂行工作卡仓库
+# cards/ — 只读历史归档（自 2026-07-30 起冻结）
 
-> 本目录是 **P4 闭环跑通之前** 的暂行卡存储。等 [C-008](./C-008.md) 跑通 impl→verify→VERDICT→merge 全闭环后，切回 loopd 正式体系（CAS 领卡 + GitHub issue 物化）。
+> **⚠️ ARCHIVED — 本目录自 2026-07-30 起为只读历史归档。**
+> 任何 `status:` / `ready:` 字段不再具有权威性。新工单一律走
+> **product-x issues** 的 ```json loop``` 块（经 tick.py/loopd 的 CAS 领卡）。
+> 权威状态见 [INDEX.md](./INDEX.md) 的 `product_x_issue` 列。
+>
+> 本目录曾是 P4 闭环跑通之前的暂行卡存储。切回 loopd 正式体系后，
+> cards/ 的使命已完成（R10-5 终结双真源 F-C）。
 
 ## AI 入口判定（任何 AI 来这里先读这段）
 

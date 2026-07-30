@@ -34,3 +34,24 @@ review:
   arbitration_samples: 3         # 复现结果冲突时凑够几个样本才交 planner 仲裁
   harden_after_confirms: 2       # 同一 suggested_checker 被确认 N 次 → 强制转「写检查器」卡
   precision_floor: 0.5           # reviewer_model 的 claim 精度低于此值 → 自动降权/改路由
+gates:
+  # gates/run_gates.py 读取本段决定一个 profile 应当执行哪些 gate（R10-3）。
+  # 不得偷偷缩小集合：新增 gate 时必须加进 default profile，否则等于静默跳过（F-A 根因）。
+  timeout_default: 120           # 秒；单个 gate 超时即判失败
+  timeouts:                      # 按 gate 名覆盖
+    verdict: 180
+  search_dirs:                   # gate 文件解析顺序（先到先得），三处都找不到才算缺席
+    - gates
+    - .loop/gates
+    - ${LOOP_ROOT}/gates
+  profiles:
+    default:                     # loop 仓全集（与 settings/*-main-protection.json required_status_checks 对齐）
+      - charter
+      - diffsize
+      - license
+      - minage
+      - paths
+      - testown
+      - upstream
+      - verdict
+      - lockdiff
