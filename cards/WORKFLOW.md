@@ -1,11 +1,46 @@
 # WORKFLOW.md — P4 闭环前的暂行工作流程
 
-> **已停用，切回 loopd @2026-07-30**（C-008 闭环达成）
+> **暂行流程继续生效** @2026-07-30 修订
 >
-> 适用范围：从现在起，到 [C-008](./C-008.md) 跑通 impl→verify→VERDICT→merge 全闭环为止。
-> 闭环后切回 loopd 正式体系（CAS + materializer + gates），本文件归档。
+> C-008 闭环已达成（一次），但仍有大量 V 卡未验证、F-002 未修。**暂行流程不停止**，直到：
+> - 全部 V 卡 done 或 closed
+> - F-002 修复并验证（建 C-015 修 ci.yml 加 merge_group）
+> - gh 认证就绪，切回 loopd 正式体系
 >
-> **已知遗留（停用时未修，见 [F-002](./F-002.md)）**：product-x `ci.yml` 缺 `merge_group` 触发器，而 ruleset 19949520 启用了 `merge_queue`（ALLGREEN）规则。后果：任何走 merge queue 的 PR 会永久卡在 AWAITING_CHECKS（队列临时分支 0 check-runs）。C-008 闭环的最后一次合并（PR #53）靠 admin break-glass（临时移除 merge_queue 规则→合并→立即原样恢复）完成。**切回 loopd 前必须先修 F-002**（在 ci.yml `on:` 块加 `merge_group: { branches: [main] }`），否则 loopd 正式体系的 merge queue 门禁仍不可用。
+> **已知遗留（见 [F-002](./F-002.md)）**：product-x `ci.yml` 缺 `merge_group` 触发器，而 ruleset 启用了 `merge_queue`（ALLGREEN）规则。后果：任何走 merge queue 的 PR 会永久卡在 AWAITING_CHECKS。[C-015](./C-015.md) 已建卡修复（在 ci.yml `on:` 块加 `merge_group: { branches: [main] }`）。修复前 PR 合并需 admin break-glass。
+
+## 0. 自动流转规则（核心，新增 @2026-07-30）
+
+以下是暂行期的状态机推进规则，**每个 AI 会话都必须执行**：
+
+### 0.1 C 卡 done → V 卡自动 ready
+当 C-0NN 工作卡 `status: done`：
+- 找到 `verify_target` 指向该 C 卡的 V-0NN 验证卡。
+- 改 V 卡 `ready: false` → `ready: true`，评论"C 卡已 done，置 V 卡 ready"。
+- 在 INDEX.md 的 V 表同步 ready 列。
+- **执行者**：标 C 卡 done 的那个 AI（P-continue 第 5 节第 4 步）。或下一个进来的 AI（P-continue 第 1 节第 2 步 V 卡扫描）。
+
+### 0.2 V 卡 FAIL → 建 F 卡
+当 V-0NN 验证 `VERDICT=FAIL`：
+- 新建 F-0NN（`first_seen: true`、`status: pending`、`ready: true`、evidence 客观可复现）。
+- 不改原 C 卡状态（保持 done）。
+- 在 INDEX.md 的 F 表登记。
+- **执行者**：验证 AI（P-continue 第 7 节）。
+
+### 0.3 F 卡复现成功 → 立即修
+当 F-0NN 被下一个 AI 完整复现：
+- 起修复卡 C-0NN（depends_on 含原 C 卡），在 INDEX.md 登记。
+- F-0NN 标 done，评论"已复现，转 C-0NN 修复"。
+- **立即领 C-0NN 动手修**，不要只建卡就走（P-continue 第 8 节第 2 步）。
+- C-0NN done 后翻对应 V 卡 ready（若有，见 0.1）。
+- **执行者**：复现 F 卡的那个 AI。
+
+### 0.4 流转链全貌
+```
+C 卡 done → V 卡 ready:true → V 卡被领 → V 卡 PASS → V 卡 done（闭环）
+                                   → V 卡 FAIL → F 卡建（ready:true）→ F 卡被领 → 复现成功 → C 修复卡建+立即修 → C done → V ready...（循环直到 PASS）
+                                                                              → 复现失败 → 评论差异 → 下个 AI 仲裁
+```
 
 ## 1. 角色定义（暂行期，单 AI 可切换角色）
 
