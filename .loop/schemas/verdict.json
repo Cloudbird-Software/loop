@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Cloudbird-Software/loop/main/.loop/schemas/verdict.json",
+  "title": "VERDICT",
+  "description": "Verifier verdict JSON. Posted by verify sandbox via `loop verdict <file>`. Gate gate_verdict.py checks head_sha binding.",
+  "type": "object",
+  "required": ["head_sha", "blind_phase_commit", "artifact_digest", "test_plan_version", "acs"],
+  "additionalProperties": false,
+  "properties": {
+    "head_sha": {
+      "type": "string",
+      "description": "The commit SHA the verdict is bound to. Must match PR HEAD at submission time."
+    },
+    "blind_phase_commit": {
+      "type": "string",
+      "description": "Commit SHA recorded at the end of blind phase (tests written before reading src/)."
+    },
+    "artifact_digest": {
+      "type": "string",
+      "description": "SHA256 digest of test artifacts directory (tests + fixtures), hex-encoded."
+    },
+    "test_plan_version": {
+      "type": "string",
+      "description": "Version identifier of the test plan (e.g. card id + acceptance count)."
+    },
+    "acs": {
+      "type": "array",
+      "description": "Per acceptance-criterion result.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "pass", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "AC identifier from card (e.g. AC1, AC2)."
+          },
+          "pass": {
+            "type": "boolean",
+            "description": "true = AC passed, false = AC failed."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Evidence reference in format file::test_case_name (e.g. tests/unit/errors_test.py::test_ac1_error_logged)."
+          }
+        }
+      }
+    }
+  }
+}
