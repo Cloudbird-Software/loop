@@ -18,7 +18,7 @@
 | [C-008](./C-008.md) | 造 verify.required=true 卡跑通 impl→verify→merge 闭环 | critical | [C-004, C-005, C-007] | **true** | **done** | P1 |
 | [C-009](./C-009.md) | 8 个 gate 接进 product-x branch ruleset | standard | [C-007] | **true** | **done** | P1 |
 | [C-010](./C-010.md) | 起草 CHARTER.md（G/N/Q） | standard | — | true | **done** | P2 |
-| [C-011](./C-011.md) | 验 scribe（journal 第二 remote + mirror token） | trivial | — | true | pending | P2 |
+| [C-011](./C-011.md) | 验 scribe（journal 第二 remote + mirror token） | trivial | — | true | **done** | P2 |
 | [C-012](./C-012.md) | 验 canary（合成工单 + 告警） | trivial | — | true | pending | P2 |
 | [C-013](./C-013.md) | 扩到 2-3 沙盒验并发（CAS+租约+reaper） | standard | [C-001, C-005, C-008] | false | pending | P2 |
 | [C-014](./C-014.md) | 修复 F-001：/health 改用 stdlib（零外部依赖） | standard | [F-001] | true | in_progress | P1 |
