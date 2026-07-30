@@ -20,7 +20,7 @@
 import json, os, subprocess, sys, pathlib, fnmatch, re, hashlib, datetime
 
 E = os.environ
-_repo_env = E.get("LOOP_REPO", "product-x")
+_repo_env = E.get("LOOP_REPO", "loop")
 # Handle both short name ("loop") and full name ("Cloudbird-Software/loop")
 REPO = _repo_env if "/" in _repo_env else f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{_repo_env}'
 VALID_TIERS = {"trivial", "standard", "critical"}
@@ -354,7 +354,6 @@ def update_parent_issue(parent_num, cards, card_issues):
         cid = card.get("id","?")
         obj = card.get("objective","?")
         tier = card.get("tier","standard")
-        status = "objective" if card.get("blocked_by") else "objective"
         dep = f" (blocked_by: {card['blocked_by']})" if card.get("blocked_by") else ""
         body += f"- [ ] #{issue_num} — {cid} (O:{obj}, tier:{tier}){dep}\n"
     body += f"\n## Total: {len(card_issues)} cards\n"
