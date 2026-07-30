@@ -36,7 +36,7 @@
 | [V-006](./V-006.md) | tick 回收僵尸 + 依赖放行 | C-006 | critical | [C-006] | true | pending |
 | [V-007](./V-007.md) | verify.required=true 卡调 verify.sh 非退化态 | C-007 | standard | [C-007] | true | pending |
 | [V-008](./V-008.md) | impl→verify→VERDICT→merge 全闭环 | C-008 | critical | [C-008] | true | **done** |
-| [V-009](./V-009.md) | 不带 gate 的 PR 被 ruleset 拦下 | C-009 | standard | [C-009] | true | pending |
+| [V-009](./V-009.md) | 不带 gate 的 PR 被 ruleset 拦下 | C-009 | standard | [C-009] | false | **done** |
 | [V-010](./V-010.md) | auditor/planner 按 G/N/Q 过滤 | C-010 | standard | [C-010] | true | pending |
 | [V-011](./V-011.md) | journal 推第二 remote 成功 | C-011 | trivial | [C-011] | true | pending |
 | [V-012](./V-012.md) | canary 合成工单被检测告警 | C-012 | trivial | [C-012] | false | pending |
