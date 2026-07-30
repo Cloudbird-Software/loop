@@ -11,14 +11,22 @@
 
 ## 1. 找活（第一步，每次会话都从这里开始）
 
-1. 读 `cards/INDEX.md`，找 `ready: true` 且 `status: pending` 的卡。
-2. 多张可选时，按优先级排序选**第一张**：
-   - **类型优先**：F-0NN（首次发现）> V-0NN（验证卡）> C-0NN（工作卡）
-     - F-0NN 最优先，因为已验证的问题悬而未决最危险。
-     - V-0NN 次优先，因为 done 的工作卡等着被验。
+1. 读 `cards/INDEX.md` 的**全部三张表**（C 表、V 表、F 表），不要只看 C 表。
+2. **V 卡自动 ready 扫描（硬步骤，不许跳）**：逐张检查 V-0NN 表——若该 V 卡 `ready: false` 但 `status: pending`，且 `verify_target` 指向的 C 卡 `status: done`，则：
+   - 改该 V 卡 `ready: false` → `ready: true`。
+   - 在卡底评论"依赖满足，置 ready @沙盒ID @时间"。
+   - 在 INDEX.md 的 V 表同步改 ready 列。
+   - 这不是"造卡"，是状态机推进。每个会话开头都必须跑一遍这个扫描，否则验证环永远转不起来。
+3. 在全部三张表里找 `ready: true` 且 `status: pending` 的卡。
+4. 多张可选时，按优先级排序选**第一张**：
+   - **类型优先（硬规则，不许自行调整）**：F-0NN（首次发现）> V-0NN（验证卡）> C-0NN（工作卡）
+     - F-0NN 最优先：已验证的问题悬而未决最危险。F 表里只要有 `ready:true & pending`，**必须先领 F 卡**，不许跳过。
+     - V-0NN 次优先：done 的工作卡等着被验。V 卡堆积 = 已完成的工作未被验证 = 闭环没走通。
    - **同类型按 tier**：critical > standard > trivial
    - **同 tier 按 INDEX.md 列表顺序**（依赖链上游优先）
-3. 没找到任何 ready:true & pending 的卡 → 在 `cards/INDEX.md` 底部评论"会话开始 @沙盒ID @时间，无 ready 卡，退出"，结束会话。**不要硬找活**（不要把 blocked 卡当 ready，不要自己造卡塞进队列——造卡是 planner 的活，等 [C-003](../cards/C-003.md) 起来）。
+5. 没找到任何 ready:true & pending 的卡（且第 2 步 V 卡扫描也无新翻 ready 的）→ 在 `cards/INDEX.md` 底部评论"会话开始 @沙盒ID @时间，无 ready 卡，退出"，结束会话。**不要硬找活**（不要把 blocked 卡当 ready，不要自己造卡塞进队列——造卡是 planner 的活）。
+
+> **为什么有这一步**：上一个 AI 把 C 卡标 done 后，对应的 V 卡不会自动 ready。如果没有"每个 AI 进来先翻 V 卡 ready"的规则，验证环就断了。这是已确认的根因，不许跳过。
 
 ## 2. 领卡前依赖检查（硬规则，不许跳）
 
@@ -59,8 +67,9 @@
 1. 逐条跑 `acceptance`，每条记 PASS + 客观证据（命令输出/文件路径+行号/commit）。
 2. 全 PASS → 改 `status: in_progress` → `done`。
 3. 在卡底评论：`完成 @commit + acceptance 自检：[条目1 PASS, 条目2 PASS, ...]`。
-4. 若是 V-0NN 且 FAIL → 见第 6 节，**不要标 done**。
-5. 完成后回到第 1 步找下一张（会话配额未满时）。
+4. **若是 C-0NN 工作卡（硬步骤，不许跳）**：找到 `verify_target` 指向本 C 卡的 V-0NN，改 `ready: false` → `ready: true`，评论"C 卡已 done，置 V 卡 ready"。在 INDEX.md 的 V 表同步改。**这一步触发验证流转——不翻 ready，验证环就断了。**
+5. 若是 V-0NN 且 FAIL → 见第 6 节，**不要标 done**。
+6. 完成后回到第 1 步找下一张（会话配额未满时）。回到第 1 步时**重新跑第 1 节第 2 步的 V 卡 ready 扫描**（你刚 done 的 C 卡可能又解锁了新的 V 卡）。
 
 ## 6. 验证卡 V-0NN 特别规则（你是 verify 角色时）
 
@@ -109,14 +118,18 @@ evidence 里**绝不允许**出现："我觉得""可能""似乎""应该""感觉"
 领到 F-0NN 后，**必须先完整复现**，不许直接动手修：
 
 1. 按 F-0NN 的 `evidence` 逐条在自己沙盒里跑。
-2. **能完整复现**（每条 evidence 都重现了记录的实际输出）→ 问题确认真实：
+2. **能完整复现**（每条 evidence 都重现了记录的实际输出）→ 问题确认真实，**立即动手修，不要只建卡就走**：
    - 起新工作卡 C-0NN（`depends_on` 含原 C-0NN），标题注明"修复 F-0NN 复现的问题"。
    - 改 F-0NN `status:done`，评论"已复现 @沙盒ID @commit，转 C-0NN 修复"。
+   - 在 INDEX.md 的 C 表登记新卡 + F 表更新 F-0NN 状态。
+   - **立即领这张新 C-0NN 卡**（改 status:in_progress，评论"领卡"），按 impl 角色干活直到 done。
+   - C-0NN done 后，按第 5 节第 4 步翻对应 V 卡 ready（若有）。
+   - 即：复现→建修复卡→立刻修→done→翻 V 卡 ready，一气呵成，不留给"下一个 AI"。
 3. **不能完整复现**（部分步骤重现不出来，或你的输出与 evidence 记录不符）→ **不要修复**：
    - 在 F-0NN 卡底评论"差异：步骤 X 在我的沙盒输出 Y，与 evidence 记录的 Z 不符 @沙盒ID @commit @时间"。
    - **不改 F-0NN 状态**（保持 pending，等下一个 AI 仲裁）。
 4. **必须先读 F-0NN 全部评论历史**再决定。后续多个 AI 的复现结果是仲裁依据：
-   - N 个复现成功 + 0 失败 → 修复
+   - N 个复现成功 + 0 失败 → 修复（按第 2 步立即修）
    - N 个复现失败 + 0 成功 → 可能环境差异，评论"建议升级为环境差异调查"
    - 既有成功又有失败 → 评论自己的结果，凑齐 ≥3 样本后由 planner 仲裁
 
@@ -129,7 +142,7 @@ evidence 里**绝不允许**出现："我觉得""可能""似乎""应该""感觉"
 5. **不要在 verify FAIL 时强行合并或强行 PASS**。
 6. **不要问用户问题，不要等用户回复**。有疑问按 acceptance 字面最小实现，把疑问写进卡底评论留给下个 AI。
 7. **不要自己造卡塞进队列**（造卡是 planner 的活，等 [C-003](../cards/C-003.md)）——除非你在处理 F-0NN 建修复卡（第 8 节允许）或你是 verify 建 F-0NN（第 7 节允许）。
-8. **不要改 `cards/README.md` / `cards/WORKFLOW.md` / `cards/INDEX.md` 的结构**（只改你自己卡的 status 字段 + 在 F 表登记）。
+8. **不要改 `cards/README.md` / `cards/WORKFLOW.md` 的结构**（INDEX.md 可以改：翻 V 卡 ready 列、登记新 F 卡/C 卡行——这是第 1 节第 2 步和第 5 节第 4 步要求的，不算"改结构"）。
 
 ## 10. 资源指引（按需读）
 
