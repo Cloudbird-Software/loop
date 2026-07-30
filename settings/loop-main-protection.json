@@ -1,9 +1,9 @@
 {
-  "id": 19949520,
+  "id": 20052299,
   "name": "main-protection",
   "target": "branch",
   "source_type": "Repository",
-  "source": "Cloudbird-Software/product-x",
+  "source": "Cloudbird-Software/loop",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
@@ -37,8 +37,8 @@
         "require_last_push_approval": false,
         "required_review_thread_resolution": false,
         "allowed_merge_methods": [
-          "squash",
           "merge",
+          "squash",
           "rebase"
         ]
       }
@@ -50,22 +50,19 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "lint"
-          },
-          {
             "context": "test"
           },
           {
-            "context": "verify"
+            "context": "lint"
           },
           {
-            "context": "contract"
+            "context": "no-fake-green"
           },
           {
-            "context": "paths-lease"
+            "context": "actions-pinned"
           },
           {
-            "context": "verdict-binding"
+            "context": "schemas"
           }
         ]
       }

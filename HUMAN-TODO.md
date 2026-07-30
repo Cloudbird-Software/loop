@@ -71,24 +71,21 @@ GitHub Action 调用 copilot。等 WAVE-12 推进到建立该 Action 时再自�
 
 ## B. 安全级（不做，系统能跑但有实质风险）
 
-### [ ] B1. 重新导出线上 ruleset 并核对 `settings/main-protection.json`
+### [x] B1. 重新导出线上 ruleset 并核对 `settings/main-protection.json`
 
-**这是本次审查中专家和复现者**都漏掉**的一条，我认为它是当前最危险的单点。**
+**已完成（2026-07-30）**：通过 `gh api` 拉取 product-x 线上 ruleset (id=19949520) 全量 JSON，
+写回 `settings/main-protection.json`（补回缺失的 `required_status_checks` 规则，含 6 个 check：
+lint/test/verify/contract/paths-lease/verdict-binding）。
 
-**问题**：`settings/main-protection.json` 里**根本没有 `required_status_checks` 规则**。
-而线上 ruleset（id 19949520，enforcement: active）实际强制着 6 个 check。
-一旦 `policy.yml` 的 apply 路径被实现（`policy.yml:29-33` 目前还是 `echo "TODO"`），
-它会以"人类已批准"的名义，把线上仅有的 6 道真门禁**删光**。
+同时**新增** `settings/loop-main-protection.json`，记录 loop 仓自己的 ruleset (id=20052299)，
+让 `drift_check.py` 同时监控两个仓的 ruleset 漂移。
 
-**动作**：
-```
-gh api repos/Cloudbird-Software/product-x/rules/branches/main > /tmp/live-ruleset.json
-```
-把结果交给执行 R10-4 的 agent，或自己核对进文件。
+本地验证：`python3 conductor/drift_check.py` → "No drift detected. All settings match live rulesets."
+已关闭 drift Incident #55。
 
-**不做会怎样**：R10-4 无法验收；drift 检测持续产生噪声；apply 一旦实现即为高危。
-
-**验证**：`python3 gates/gate_settings_roundtrip.py` 输出 `OK`。
+**残余风险**（R10-4 承接）：`policy.yml` 的 apply 路径仍是 `echo TODO`。一旦实现 apply，
+必须确保它从 `settings/*.json` **完整**应用（包括 required_status_checks），而不是删掉它。
+R10-4 的验收要求：`gate_settings_roundtrip.py` 还未实现，需 R10-4 创建。
 
 ### [ ] B2. 密钥降权与轮换
 
@@ -104,11 +101,11 @@ gh api repos/Cloudbird-Software/product-x/rules/branches/main > /tmp/live-rulese
 真实风险只是"高权限 PAT 存为 repo secret"这一密钥卫生问题。我已把 `canary.yml` 里那条
 过时注释改成事实。
 
-### [ ] B3. 授予 loop 仓所需的 secret 访问
+### [x] B3. 授予 loop 仓所需的 secret 访问
 
-**动作**：确认 loop 仓能访问 `POLICY_R`（或等价凭证）。当前 `drift.yml` 在缺 secret 时
-的静默 SKIP 已被我改为显式失败——所以**改完之后它会开始报红**，这是正确行为，
-不是我改坏了。请配上凭证，或明确决定停用该 workflow。
+**已完成**：drift.yml 最近两次运行（2026-07-30 14:07 / 09:29）均 `success`，
+说明 loop 仓已能访问 `POLICY_R_APP_ID` / `POLICY_R_APP_KEY`。
+drift 检测正常工作（#55 Incident 即由它自动开出，现已因 drift 修复而关闭）。
 
 ---
 
@@ -166,26 +163,34 @@ R14-2 需要一条真实可送达的通知通道（波次通过/失败、需要�
 WAVE-14 的承重验收是"在探针仓上连续 7 天零人工干预"。请指定一个你不会手痒去动它的时间窗。
 中途任何一次人工介入都会导致重新计时——这不是苛刻，是因为"需要人推一把"就不叫 ready。
 
-### [ ] D3. 既有 issues 的去留
+### [x] D3. 既有 issues 的去留
 
-我已在 `docs/issue去留裁决-2026-07-30.md` 给出全部 84 个 issue（loop 36 + product-x 48）
-的建议。**关闭动作我做不了**（我只有只读的 GitHub 查询能力，无法创建或关闭 issue），
-需要你或一个有写权限的 agent 执行。批量命令我已写在那份文档里，可直接粘贴。
+**已完成（2026-07-30）**：用户授予 admin token 后，已按 `docs/issue去留裁决-2026-07-30.md`
+执行全部批量关闭命令：
+- loop 仓：关闭 #3/#5/#6/#47（重复 Incident）/ #49（被 R14-4 吸收）/ #50（已完成）/ #51（已修复）/ #55（drift 已修复）。剩余 open：#4/#48（Incident 证据）/ #52/#53（relay 安全决策）+ 38 张新卡。
+- product-x 仓：关闭 30 张（重复物化 / 合成工单 / 已完成 C 卡 / 被新波次吸收的 V 卡）。剩余 14 张 open。
 
 ---
 
-## 我做不到的事（不是不愿意，是环境限制）
+## 本会话已通过用户授权 token 完成的事（区别于 AI 常态能力）
 
-诚实告知，以免你以为已经做了：
+> 以下事项在 2026-07-30 会话中，由用户提供 admin PAT 后一次性完成。
+> **这改变了 AI 的常态能力边界**——没有用户授权 token 时，AI 仍不能做这些。
+> CHARTER N5 的红线（"不许把 apply 路径接成自动闭环"）仍然有效。
 
-1. **我无法创建或关闭 GitHub issue**。本次全部 33 张卡以 `waves/WAVE-10..14.md` 的形式交付，
-   合并到 main 后由我恢复的 `.github/workflows/materializer.yml` 自动建单
-   （milestone + 父 Wave issue + 33 张卡 issue，依赖关系已写在卡的 `blocked_by` 字段里）。
-   我已本地跑过物化器的全部校验：**33 张卡全部通过**四项校验与 paths 两两不交叉检查。
-2. **我无法向 product-x 推送**。所以目标为 product-x 的 6 张卡
-   （R10-2 / R13-3 / R13-4 / R13-6 及相关）以 `"repo": "product-x"` 标注，
-   由领卡 agent 在 product-x 开 PR，反向链接回 loop 的 issue。
-3. **我无法调用 `gh api`** 读线上 ruleset。本文件与裁决文档中所有关于线上 ruleset 的陈述，
-   都来自你提供的复现报告，我已标注来源。B1 需要你或有权限的 agent 重新取证。
-4. **我无法改 GitHub 仓库设置**（template 开关、ruleset、secret）。这也正是 CHARTER N5
-   所要求的边界。
+1. **物化器自动建单**：33 张卡 + 5 Wave 父单 + 5 milestone 已由 `materializer.yml`
+   在 PR #54 合并后自动创建（loop 仓 #57–#94）。materialize.py 的 bug 已修复。
+2. **既有 issue 批量关闭**：按裁决文档关闭 loop 7 个 + product-x 30 个 issue（见 D3）。
+3. **loop 仓 ruleset 创建**：通过 REST API 创建 ruleset id=20052299，含 5 个 required check
+   + merge_queue（见 C1）。UI 无法添加未运行过的 check，API 可以。
+4. **product-x 线上 ruleset 取证**：通过 `gh api` 拉取并写回 `settings/main-protection.json`（见 B1）。
+5. **drift Incident 关闭**：#55 已关闭。
+
+## 仍需用户做的事（AI 无 token 时无法代做）
+
+1. **A1 审定签署 CHARTER.md**——这是唯一不可由 AI 终局裁定的事项。
+2. **A2 product-x 设为 Template Repository**——需要仓库 admin 权限。
+3. **B2 密钥降权与轮换**——需要组织级 secret 管理权限。
+4. **C2 product-x required check 名单同步**——时机在 R13-3，需与新 job 名同步更新。
+5. **C3 维护 products.yml**——每新建产品仓时登记。
+6. **D1 通知通道选型 / D2 7 天无人值守时间窗**——需要你拍板。
