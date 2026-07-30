@@ -8,7 +8,7 @@
 
 | ID | 标题 | tier | depends_on | ready | status | 优先级 |
 |---|---|---|---|---|---|---|
-| [C-001](./C-001.md) | 定"继续"路线 + 起草 P-continue.md 提示词 | critical | — | true | pending | P0 |
+| [C-001](./C-001.md) | 定"继续"路线 + 起草 P-continue.md 提示词 | critical | — | true | **done** | P0 |
 | [C-002](./C-002.md) | 补 P2.md（auditor 提示词） | standard | — | true | pending | P0 |
 | [C-003](./C-003.md) | 补 P3.md（planner 提示词） | standard | — | true | pending | P0 |
 | [C-004](./C-004.md) | 补 P4.md（verify 提示词，盲一半协议） | standard | — | true | pending | P0 |
