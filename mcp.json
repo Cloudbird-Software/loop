@@ -1,0 +1,27 @@
+{
+  "_doc": "接缝 D 工具白名单（OPC-v4 §1.1、§2.1）。仅 auditor/planner 沙盒引用本文件；impl/verify 沙盒不挂载任何 GitHub MCP 工具，写操作只走 loopd。官方 github-mcp-server 以 --read-only + 限定 toolsets + GITHUB_LOCKDOWN_MODE=1 三重收紧运行。镜像 tag 待 D 包/E 包登记进 UPSTREAM.yaml 并 pin 到全长 digest。",
+  "_v4_redline_mapping": {
+    "--read-only": "args 中的 --read-only：只读模式为严格安全过滤器，优先级高于其它配置，即使显式请求也禁用写工具",
+    "--toolsets=issues,pull_requests,repos,actions": "args 中限定四个 toolset；不暴露 contexts/administration 等高危 toolset",
+    "GITHUB_LOCKDOWN_MODE=1": "env.GITHUB_LOCKDOWN_MODE=1：检查条目作者是否对仓库有 push 权限，防提示词注入",
+    "内容净化": "github-mcp-server 默认开启内容净化（防 prompt injection），无需额外字段",
+    "impl/verify 不给写工具": "部署约束：本文件仅 auditor/planner 沙盒挂载；写操作一律走 loopd 动词，不经过 MCP"
+  },
+  "mcpServers": {
+    "github": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e", "GITHUB_LOCKDOWN_MODE",
+        "ghcr.io/github/github-mcp-server",
+        "--read-only",
+        "--toolsets=issues,pull_requests,repos,actions"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GH_TOKEN}",
+        "GITHUB_LOCKDOWN_MODE": "1"
+      }
+    }
+  }
+}
