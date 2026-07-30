@@ -798,6 +798,54 @@ def h_status(args):
     return {"stdout": "\n".join(lines) + "\n"}
 
 # ============================================================
+# tick：调用 conductor/tick.py 关键函数（方案 B，暂行期）
+# ============================================================
+@intent("tick")
+def h_tick(args):
+    """暂行期：由 P-continue agent 在每次'继续'时调一次，或外部 cron 触发。
+    调用 conductor/tick.py 的 4 件关键函数：
+    僵尸回收、依赖放行、plan inbox 打包、48h 静默放行。
+    conductor App 建好后切回原生 workflow（见 C-006）。"""
+    import importlib.util
+    tick_path = ROOT / "conductor" / "tick.py"
+    if not tick_path.exists():
+        tick_path = pathlib.Path("/workspace") / "conductor" / "tick.py"
+    if not tick_path.exists():
+        return {"code": 1, "stderr": f"tick.py not found at {tick_path}\n"}
+    spec = importlib.util.spec_from_file_location("tick", tick_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return {"code": 1, "stderr": f"tick.py load error: {e}\n"}
+    results = []
+    # 1. 僵尸回收
+    try:
+        reclaimed = mod.zombie_reclaim()
+        results.append(f"[1] zombie_reclaim: {len(reclaimed) if reclaimed else 0} reclaimed")
+    except Exception as e:
+        results.append(f"[1] zombie_reclaim: ERROR {e}")
+    # 2. 依赖放行
+    try:
+        mod.unblock_deps()
+        results.append("[2] unblock_deps: done")
+    except Exception as e:
+        results.append(f"[2] unblock_deps: ERROR {e}")
+    # 3. plan inbox 打包
+    try:
+        mod.plan_inbox_pack()
+        results.append("[3] plan_inbox_pack: done")
+    except Exception as e:
+        results.append(f"[3] plan_inbox_pack: ERROR {e}")
+    # 4. 48h 静默放行
+    try:
+        mod.silent_auto_release()
+        results.append("[4] silent_auto_release: done")
+    except Exception as e:
+        results.append(f"[4] silent_auto_release: ERROR {e}")
+    return {"stdout": "=== loop tick ===\n" + "\n".join(results) + "\n=== tick complete ===\n"}
+
+# ============================================================
 # help：打印动词表
 # ============================================================
 VERB_TABLE = """\
@@ -819,6 +867,7 @@ Verbs:
   run <intent>        白名单意图兜底
   retire              结束会话（归档+通知点击器重开）
   status              自检（daemon/token/租约/计数）
+  tick                跑 conductor tick 4 件（僵尸/依赖/inbox/48h 放行）
   help                打印本表
 
 形式：loop <动词> [最多两个位置参数]

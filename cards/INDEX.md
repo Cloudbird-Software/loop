@@ -9,9 +9,9 @@
 | ID | 标题 | tier | depends_on | ready | status | 优先级 |
 |---|---|---|---|---|---|---|
 | [C-001](./C-001.md) | 定"继续"路线 + 起草 P-continue.md 提示词 | critical | — | true | **done** | P0 |
-| [C-002](./C-002.md) | 补 P2.md（auditor 提示词） | standard | — | true | pending | P0 |
-| [C-003](./C-003.md) | 补 P3.md（planner 提示词） | standard | — | true | pending | P0 |
-| [C-004](./C-004.md) | 补 P4.md（verify 提示词，盲一半协议） | standard | — | true | pending | P0 |
+| [C-002](./C-002.md) | 补 P2.md（auditor 提示词） | standard | — | true | **done** | P0 |
+| [C-003](./C-003.md) | 补 P3.md（planner 提示词） | standard | — | true | **done** | P0 |
+| [C-004](./C-004.md) | 补 P4.md（verify 提示词，盲一半协议） | standard | — | true | **done** | P0 |
 | [C-005](./C-005.md) | 塞测试 wave WAVE-2 进 product-x | standard | [C-003] | false | pending | P0 |
 | [C-006](./C-006.md) | 把 conductor tick 跑起来 | critical | — | true | pending | P0 |
 | [C-007](./C-007.md) | product-x 立最小 contracts/ + verify.sh | standard | — | true | pending | P1 |
