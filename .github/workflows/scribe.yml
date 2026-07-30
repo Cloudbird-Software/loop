@@ -9,8 +9,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: t
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
-        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
+        run: |
+          echo "token=${{ secrets.SCRIBE_GH_TOKEN }}" >> "$GITHUB_OUTPUT"
       - name: Export full snapshot
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
