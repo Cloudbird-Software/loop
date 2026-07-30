@@ -14,6 +14,11 @@
 """
 import json, os, subprocess, sys, time, datetime, collections, pathlib, hashlib, tempfile, re
 
+try:
+    from conductor.blocks import extract_block, inject_block
+except ImportError:
+    from blocks import extract_block, inject_block
+
 E = os.environ
 REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
 LOOP_ROOT = pathlib.Path(E.get("LOOP_ROOT", "/workspace"))
@@ -32,20 +37,6 @@ def sh(*a, **kw):
 def gh(*a):
     return sh("gh", *a)
 
-def extract_block(body):
-    m = "```json loop"
-    if m not in (body or ""): return None
-    seg = body.split(m,1)[1].split("```",1)[0]
-    try: return json.loads(seg)
-    except Exception: return None
-
-def inject_block(body, blk):
-    m = "```json loop"
-    if m not in (body or ""):
-        return (body or "") + "\n\n```json loop\n" + json.dumps(blk, indent=2, ensure_ascii=False) + "\n```\n"
-    head, rest = body.split(m,1); tail = rest.split("```",1)[1]
-    return head + "```json loop\n" + json.dumps(blk, indent=2, ensure_ascii=False) + "\n```" + tail
-
 def load_policy():
     try:
         import yaml
@@ -58,9 +49,11 @@ POLICY = load_policy()
 
 def week_range():
     """返回本周 ISO 周范围（周一 00:00 ~ 周日 23:59 UTC-approx）。"""
-    now = datetime.datetime.utcnow()
-    monday = now - datetime.timedelta(days=now.weekday())
-    monday0 = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    now_aware = datetime.datetime.now(datetime.timezone.utc)
+    monday = now_aware - datetime.timedelta(days=now_aware.weekday())
+    monday0_aware = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    monday0 = monday0_aware.replace(tzinfo=None)
+    now = now_aware.replace(tzinfo=None)
     week_num = monday0.isocalendar()[1]
     year = monday0.year
     return (year, week_num, monday0, now)

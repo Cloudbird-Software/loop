@@ -3,6 +3,7 @@ on:
   schedule: [{cron: "0 */6 * * *"}]
   workflow_dispatch:
 permissions: {contents: read, issues: write}
+concurrency: {group: drift, cancel-in-progress: false}
 jobs:
   drift-check:
     runs-on: ubuntu-latest
@@ -33,7 +34,30 @@ jobs:
           python3 conductor/drift_check.py
       - name: Skip notice (secret not accessible)
         if: steps.chk.outputs.has_secret != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # fake-green-ok: 本步骤末尾恒 exit 1；set +e 只为在开 Incident 失败时仍能走到 exit 1
+          set +e
           echo "SKIP: drift check skipped — POLICY_R secret not accessible for this repo."
           echo "Fix: org admin → Settings → Secrets and variables → Actions → POLICY_R_APP_ID/POLICY_R_APP_KEY → update visibility to 'Selected repositories' and add Cloudbird-Software/loop."
           echo "After fix, drift will resume on next schedule (every 6h)."
+          echo "::error::drift check disabled — POLICY_R secret not accessible"
+          TITLE="Incident: drift check disabled — POLICY_R secret not accessible"
+          # fake-green-ok: label 已存在时 gh label create 返回非零，属幂等操作的正常路径
+          gh label create "incident" -R "${{ github.repository }}" --color b60205 2>/dev/null || true
+          COUNT=$(gh issue list -R "${{ github.repository }}" --state open --search "$TITLE in:title" --json title --jq 'map(select(.title == "Incident: drift check disabled — POLICY_R secret not accessible")) | length' 2>/dev/null)
+          if [ $? -ne 0 ]; then
+            echo "::warning::无法查询现有 Incident；将尝试创建新 issue。"
+            COUNT=0
+          fi
+          if [ "${COUNT:-0}" = "0" ]; then
+            gh issue create -R "${{ github.repository }}" \
+              --title "$TITLE" \
+              --label "incident" \
+              --body "drift check 已停用：当前 repo 读不到 POLICY_R secret。请授予 loop repo 访问 POLICY_R_APP_ID/POLICY_R_APP_KEY 的权限，然后重跑：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              || echo "::warning::创建 Incident 失败"
+          else
+            echo "Incident already open: $TITLE"
+          fi
+          exit 1

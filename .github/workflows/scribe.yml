@@ -3,6 +3,7 @@ on:
   schedule: [{cron: "0 22,10 * * *"}]
   workflow_dispatch:
 permissions: {contents: read, issues: write}
+concurrency: {group: scribe, cancel-in-progress: false}
 jobs:
   export:
     runs-on: ubuntu-latest
@@ -17,10 +18,13 @@ jobs:
           LOOP_ORG: ${{ github.repository_owner }}
           LOOP_PRODUCT: ${{ vars.LOOP_PRODUCT || 'product-x' }}
           JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
+          SCRIBE_ALLOW_DEGRADED: ${{ vars.SCRIBE_ALLOW_DEGRADED }}
         run: |
           set -e
           test -n "$JOURNAL_REPO" || { echo "ERROR: vars.JOURNAL_REPO not set"; exit 1; }
           mkdir -p journal-snapshot
+          : > journal-snapshot/DEGRADED.txt
+          : > journal-snapshot/DEGRADED_INFO.txt
           echo "=== Export issues ==="
           gh issue list -R "$LOOP_ORG/$LOOP_PRODUCT" --state all --limit 1000 \
             --json number,title,state,labels,createdAt,updatedAt,body > journal-snapshot/issues.json
@@ -50,20 +54,37 @@ jobs:
           gh api "/repos/$LOOP_ORG/$LOOP_PRODUCT/actions/runs?per_page=100" > journal-snapshot/runs.json
           echo "=== Export workflow runs (loop, control plane) ==="
           # loop 仓库的 runs 含 canary/scribe/drift 等；canary 字段依赖此导出
-          gh api "/repos/$LOOP_ORG/loop/actions/runs?per_page=100" > journal-snapshot/loop-runs.json 2>/dev/null \
-            || echo '{"workflow_runs":[]}' > journal-snapshot/loop-runs.json
+          if ! gh api "/repos/$LOOP_ORG/loop/actions/runs?per_page=100" > journal-snapshot/loop-runs.json 2>/dev/null; then
+            echo '{"workflow_runs":[]}' > journal-snapshot/loop-runs.json
+            echo "loop-runs" >> journal-snapshot/DEGRADED.txt
+          fi
           echo "=== Export rule-suites (org) ==="
-          gh api "/orgs/$LOOP_ORG/rule-suites?per_page=100" > journal-snapshot/rule-suites.json 2>/dev/null \
-            || echo '[]' > journal-snapshot/rule-suites.json
+          if ! gh api "/orgs/$LOOP_ORG/rule-suites?per_page=100" > journal-snapshot/rule-suites.json 2>/dev/null; then
+            echo '[]' > journal-snapshot/rule-suites.json
+            echo "rule-suites" >> journal-snapshot/DEGRADED.txt
+          fi
           echo "=== Fetch taps.log from journal repo ==="
           # 点击器每小时 push taps.log 到 journal/taps/YYYY-MM-DD.log；拉当日文件做 confirm_taps 统计
           TODAY=$(date -u +%Y-%m-%d)
           gh api "/repos/$JOURNAL_REPO/contents/taps/$TODAY.log" --jq '.content' 2>/dev/null \
             | base64 -d > journal-snapshot/taps.log 2>/dev/null \
-            || echo "" > journal-snapshot/taps.log
+            || { echo "" > journal-snapshot/taps.log; echo "taps.log (info: empty taps is normal)" >> journal-snapshot/DEGRADED_INFO.txt; }
           echo "=== Generate zero-LLM daily report ==="
           python3 conductor/scribe_report.py journal-snapshot/ > journal-snapshot/daily-report.md
           cat journal-snapshot/daily-report.md
+          if [ -s journal-snapshot/DEGRADED_INFO.txt ]; then
+            while IFS= read -r src; do
+              echo "::notice::scribe 信息性 fallback: $src"
+            done < journal-snapshot/DEGRADED_INFO.txt
+          fi
+          if [ -s journal-snapshot/DEGRADED.txt ]; then
+            while IFS= read -r src; do
+              echo "::warning::scribe 降级数据源: $src"
+            done < journal-snapshot/DEGRADED.txt
+            if [ "${SCRIBE_ALLOW_DEGRADED:-false}" != "true" ]; then
+              exit 1
+            fi
+          fi
       - name: Commit snapshot to journal repo + push second remote
         env:
           GH_TOKEN: ${{ secrets.SCRIBE_GH_TOKEN }}

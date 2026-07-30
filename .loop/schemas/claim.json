@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Cloudbird-Software/loop/main/.loop/schemas/claim.json",
+  "title": "CLAIM",
+  "description": "强模型验收（review 环）的唯一合法产物。铁律：评审模型不产 PASS/FAIL，不产散文，只产可证伪断言（claim）。任何缺 repro 或缺 falsifier 的 claim 一律拒收（非零退出），不进队列。校验器：conductor/claims.py（与 loopd.py 的 _validate_finding 同风格，只用标准库逐字段校验）。",
+  "type": "object",
+  "required": ["schema", "review_id", "reviewer_model", "head_sha", "generated_at", "claims"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "schema 版本号，恒为 1。"
+    },
+    "review_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "本次评审运行的唯一 ID（建议 <repo>-<run_id>-<attempt>）。用于把 claim 归因回一次具体的 workflow run。"
+    },
+    "reviewer_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "产出本批 claim 的模型标识（接缝 A 路由解析后的真实模型名，不是别名）。claim 记分按此字段聚合，回填 ROUTING.yaml 对应 route 的 metrics 段。"
+    },
+    "reviewer_seam_b": {
+      "type": "string",
+      "description": "承载该模型的执行体（接缝 B），如 copilot-cli / opencode / codex。必须已登记进 UPSTREAM.yaml。"
+    },
+    "scope": {
+      "type": "object",
+      "description": "本次评审的输入范围，供复现者还原同一视野。",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {"type": "string"},
+        "base_sha": {"type": "string"},
+        "head_sha": {"type": "string"},
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "card_id": {"type": "string"},
+        "wave": {"type": "string"}
+      }
+    },
+    "head_sha": {
+      "type": "string",
+      "minLength": 7,
+      "description": "评审所绑定的 commit SHA。与 VERDICT 同理：head 漂移后本批 claim 的 repro 环境不再成立，复现者必须记录漂移而不是强行判定。"
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "UTC ISO8601 时间戳。"
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "description": "断言列表。空数组即评审无发现，此时不产文件（不要提交空 claims）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "claim", "severity", "confidence", "repro", "predicted_observation", "falsifier"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^CL-[0-9]{3}$",
+            "description": "本批内自增编号 CL-001 / CL-002 …"
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1,
+            "description": "一句话断言。红线（与 P-continue §7 evidence 红线一致）：不得出现「我觉得 / 可能 / 似乎 / 应该 / 感觉 / 大概 / 建议考虑」等主观措辞，校验器逐词拒收。断言必须陈述一个事实状态，而不是一个观点。"
+          },
+          "path": {
+            "type": "string",
+            "description": "断言所指的文件路径（可含 :行号）。定位用，非必填但强烈建议。"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "严重度。仅影响排队顺序，不影响是否需要复现——任何严重度的 claim 都必须先复现才能进修复。"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "评审模型自报置信度。低于 policy.yml review.min_confidence 的 claim 被校验器丢弃。此字段事后与实际 confirmed 率对照，用于校准该模型。"
+          },
+          "repro": {
+            "type": "object",
+            "required": ["cmd", "expected", "actual", "env"],
+            "additionalProperties": false,
+            "description": "客观复现步骤。这是 claim 与「模型意见」的唯一分界线：没有可粘贴执行的 cmd，就不是 claim。",
+            "properties": {
+              "cmd": {
+                "type": "string",
+                "minLength": 1,
+                "description": "可直接粘贴执行的命令（允许多行 shell）。必须是确定性的、只读的、不依赖交互输入的。"
+              },
+              "expected": {
+                "type": "string",
+                "minLength": 1,
+                "description": "若系统正确，该命令应产生的输出/退出码。"
+              },
+              "actual": {
+                "type": "string",
+                "minLength": 1,
+                "description": "评审模型实际观察到的输出/退出码。必须是它真正跑过的结果，不是它推测的结果。"
+              },
+              "env": {
+                "type": "string",
+                "minLength": 1,
+                "description": "复现环境：commit SHA + OS + 关键工具版本。缺环境的 repro 无法被第三方判定为「复现失败 vs 环境差异」。"
+              }
+            }
+          },
+          "predicted_observation": {
+            "type": "string",
+            "minLength": 1,
+            "description": "第三方在什么位置能观察到什么。回答「不看你的论证，我去哪儿看能自己看到」。"
+          },
+          "falsifier": {
+            "type": "string",
+            "minLength": 1,
+            "description": "出现什么输出就算这条断言被推翻。没有 falsifier 的断言不可证伪，一律拒收。这是整个 review 环最重要的字段。"
+          },
+          "suggested_checker": {
+            "type": "string",
+            "description": "若该问题可被确定性工具持续检出，写出建议的 lens / gate 名。复现确认后按 policy.yml review.harden_after_confirms 固化，使系统对模型的依赖单调下降。"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Cloudbird-Software/loop/main/.loop/schemas/reproduction.json",
+  "title": "REPRODUCTION",
+  "description": "复现沙盒对一条 claim 的三态判定。铁律：复现沙盒只跑 claim.repro.cmd，只比对 expected/actual，不读 claim 的论证过程、不自由发挥、不直接修代码。这是盲一半协议在 claim 层的复用。复现模型必须 != 提出该 claim 的 reviewer_model（由 conductor CAS 强制，与 verify/impl 异构同一机制）。",
+  "type": "object",
+  "required": ["schema", "claim_id", "review_id", "verdict", "reproducer_model", "observed", "env", "generated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": 1},
+    "claim_id": {
+      "type": "string",
+      "pattern": "^CL-[0-9]{3}$",
+      "description": "被判定的 claim id。"
+    },
+    "review_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "该 claim 所属评审运行 ID。"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["REPRODUCED", "NOT_REPRODUCED", "INCONCLUSIVE"],
+      "description": "三态判定。REPRODUCED = 逐条重现了 claim.repro.actual；NOT_REPRODUCED = 命令跑通但输出与 actual 不符；INCONCLUSIVE = 命令无法执行/环境缺失/超时，既不能确认也不能推翻。禁止第四种取值，禁止用 INCONCLUSIVE 掩盖 NOT_REPRODUCED。"
+    },
+    "reproducer_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "执行复现的模型标识。必须 != claim 的 reviewer_model，否则判定作废。"
+    },
+    "observed": {
+      "type": "object",
+      "required": ["cmd", "exit_code", "stdout_excerpt"],
+      "additionalProperties": false,
+      "description": "复现沙盒的原始观察，逐字记录，不许改写。",
+      "properties": {
+        "cmd": {"type": "string", "minLength": 1, "description": "实际执行的命令（应与 claim.repro.cmd 逐字一致；若有偏差必须在 diff_note 说明）。"},
+        "exit_code": {"type": "integer"},
+        "stdout_excerpt": {"type": "string", "description": "输出摘录（截断到 4KB），保留判定所需的关键行。"},
+        "stderr_excerpt": {"type": "string"}
+      }
+    },
+    "diff_note": {
+      "type": "string",
+      "description": "verdict != REPRODUCED 时必填：客观描述差异（步骤 X 在本沙盒输出 Y，与 claim 记录的 Z 不符）。禁止主观措辞，与 P-continue §7 红线同。"
+    },
+    "env": {
+      "type": "string",
+      "minLength": 1,
+      "description": "复现沙盒环境：sandbox id + commit SHA + OS + 工具版本。用于把 NOT_REPRODUCED 与环境差异区分开。"
+    },
+    "generated_at": {"type": "string"},
+    "next_action": {
+      "type": "string",
+      "enum": ["open_fix_card", "await_arbitration", "escalate_env_diff", "close_refuted"],
+      "description": "由 conductor 按仲裁规则计算并回写，复现沙盒不自行决定。规则见 docs/强模型验收环.md §4。"
+    }
+  }
+}

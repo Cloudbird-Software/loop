@@ -3,6 +3,7 @@ on:
   schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:
 permissions: {contents: read, issues: write, pull-requests: write}
+concurrency: {group: canary, cancel-in-progress: false}
 jobs:
   # ============================================================
   # Job 1: 合成工单走完整链路（开卡→claim→commit→PR→done→关卡）
@@ -14,7 +15,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Run canary chain
         env:
-          # 用高权限 PAT：需 admin merge 绕过 product-x 的 code-owner 保护
+          # canary 走 merge queue（GraphQL enqueuePullRequest），不使用 admin merge；
+          # ruleset bypass_actors 为空，任何 token 都绕不过；此处 token 仅需 issues/PR 写权限，
+          # 若当前 secret 是高权限 PAT，应按 HUMAN-TODO 降权。
           GH_TOKEN: ${{ secrets.LOOP_CANARY_TOKEN }}
           LOOP_ORG: ${{ github.repository_owner }}
           LOOP_PRODUCT: ${{ vars.LOOP_PRODUCT }}
@@ -32,6 +35,7 @@ jobs:
         run: |
           set -e
           MENTION="${LOOP_HUMAN:+@$LOOP_HUMAN }"
+          # fake-green-ok: label 已存在时 gh label create 返回非零，属幂等操作的正常路径
           gh label create "incident" -R "$LOOP_ORG/loop" --color b60205 2>/dev/null || true
           # 写 body 到文件，避免 YAML literal block 里多行字符串的缩进问题
           INC_BODY="$(mktemp)"
@@ -69,4 +73,29 @@ jobs:
         run: |
           set -e
           chmod +x .loop/scripts/canary-survival.sh
-          .loop/scripts/canary-survival.sh || true
+          .loop/scripts/canary-survival.sh
+      - name: Open Incident on survival break
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_CANARY_TOKEN }}
+          LOOP_ORG: ${{ github.repository_owner }}
+          LOOP_HUMAN: ${{ vars.LOOP_HUMAN }}
+        run: |
+          set -e
+          MENTION="${LOOP_HUMAN:+@$LOOP_HUMAN }"
+          # fake-green-ok: label 已存在时 gh label create 返回非零，属幂等操作的正常路径
+          gh label create "incident" -R "$LOOP_ORG/loop" --color b60205 2>/dev/null || true
+          INC_BODY="$(mktemp)"
+          {
+            echo "${MENTION}Canary 26h 存活自检失败，run=$GITHUB_RUN_ID。"
+            echo ""
+            echo "26 小时存活自检发现 audit/export/canary 至少一项超过预期窗口。"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo ""
+            echo "Action: 查看失败的 '26h survival self-check' step 日志；检查 audit / scribe / canary 调度健康度。"
+          } > "$INC_BODY"
+          gh issue create -R "$LOOP_ORG/loop" \
+            --title "Incident: 26h survival check failed @ $(date -u +%FT%TZ)" \
+            --label "incident" \
+            --body-file "$INC_BODY" || echo "WARN: failed to open Incident"

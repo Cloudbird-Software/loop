@@ -1,5 +1,6 @@
 # Working files not part of loop repo
-product-x/
+# 注意：必须锚定到仓库根（前导 /），否则会连带忽略 templates/product-x/ 这类模板目录。
+/product-x/
 probe.sh
 __pycache__/
 *.pyc

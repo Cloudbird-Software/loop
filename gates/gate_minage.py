@@ -33,7 +33,11 @@ for item in new:
     pkg, ver, published = item[0], item[1], item[2]
     if not published: continue
     try:
-        age = (datetime.datetime.utcnow() - datetime.datetime.fromisoformat(published)).days
+        now = datetime.datetime.now(datetime.timezone.utc)
+        pub = datetime.datetime.fromisoformat(str(published).replace("Z", "+00:00"))
+        if pub.tzinfo is None:
+            pub = pub.replace(tzinfo=datetime.timezone.utc)
+        age = (now - pub.astimezone(datetime.timezone.utc)).days
     except Exception:
         continue
     if age < MIN:

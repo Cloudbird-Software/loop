@@ -9,7 +9,12 @@
 [10]  48h 静默放行（波次 PR 48h 无人类动作 → 自动物化 trivial 子集 dispatch）
 [11]  race 模式（critical 卡双 PR → 择优合并、另一份关闭写 journal 差异）
 """
-import json, os, subprocess, sys, time, fnmatch, re, datetime, hashlib, pathlib, tempfile
+import ast, json, os, subprocess, sys, time, fnmatch, re, datetime, hashlib, pathlib, tempfile
+
+try:
+    from conductor.blocks import extract_block, inject_block
+except ImportError:
+    from blocks import extract_block, inject_block
 
 E = os.environ
 REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
@@ -40,6 +45,35 @@ def sh(*a, **kw):
 def gh(*a, check=False):
     return sh("gh", *a, check=check)
 
+def _parse_flow(val):
+    """解析简易 YAML flow 标量，失败时保留原字符串。"""
+    try:
+        return ast.literal_eval(val)
+    except Exception:
+        pass
+    try:
+        normalized = re.sub(r'([{\[,]\s*)([A-Za-z_][\w.-]*)(\s*:)', r'\1"\2"\3', val)
+
+        def repl(m):
+            prefix, word = m.group(1), m.group(2)
+            lowered = word.lower()
+            if lowered == "true": return prefix + "True"
+            if lowered == "false": return prefix + "False"
+            if lowered in ("null", "none"): return prefix + "None"
+            return prefix + repr(word)
+
+        normalized = re.sub(r'(:\s*|\[\s*|,\s*)([A-Za-z_][\w.-]*)(?=\s*[,}\]])', repl, normalized)
+        return ast.literal_eval(normalized)
+    except Exception:
+        return val
+
+def _parse_utc_iso(val):
+    """把 GitHub ISO 时间解析为 UTC aware datetime。"""
+    dt = datetime.datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
 def load_policy():
     try:
         import yaml
@@ -63,12 +97,8 @@ def load_policy():
                     stack[-1][key] = new
                     stack.append(new)
                 else:
-                    if val.startswith("{"):
-                        try: val = eval(val, {"__builtins__":{}}, {})
-                        except: pass
-                    elif val.startswith("["):
-                        try: val = eval(val, {"__builtins__":{}}, {})
-                        except: pass
+                    if val.startswith("{") or val.startswith("["):
+                        val = _parse_flow(val)
                     elif val.isdigit(): val = int(val)
                     elif val.replace(".","").isdigit() and val.count(".")==1: val = float(val)
                     stack[-1][key] = val
@@ -77,20 +107,6 @@ def load_policy():
     return policy
 
 POLICY = load_policy()
-
-def extract_block(body):
-    m = "```json loop"
-    if m not in (body or ""): return None
-    seg = body.split(m,1)[1].split("```",1)[0]
-    try: return json.loads(seg)
-    except Exception: return None
-
-def inject_block(body, blk):
-    m = "```json loop"
-    if m not in (body or ""):
-        return (body or "") + "\n\n" + m + "\n" + json.dumps(blk, indent=2, ensure_ascii=False) + "\n```\n"
-    head, rest = body.split(m,1); tail = rest.split("```",1)[1]
-    return head + m + "\n" + json.dumps(blk, indent=2, ensure_ascii=False) + "\n```" + tail
 
 def get_cards(states=None):
     q = gh("issue","list","-R",REPO,"--state","open","--limit","200",
@@ -262,7 +278,7 @@ def tier_judge():
 # ==================================================================
 def liveness_check():
     print("[6] Liveness check...")
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     threshold = now - datetime.timedelta(hours=ALIVE_THRESHOLD_HOURS)
     checks = ["canary", "scribe", "nightly-rubric", "audit"]
     for wf in checks:
@@ -274,7 +290,7 @@ def liveness_check():
                              f"No {wf} workflow runs found. System may be down.")
                 continue
             last = runs[0]
-            created = datetime.datetime.fromisoformat(last["createdAt"].replace("Z",""))
+            created = _parse_utc_iso(last["createdAt"])
             if created < threshold:
                 open_incident(f"Liveness: {wf} stale (> {ALIVE_THRESHOLD_HOURS}h)",
                              f"Last {wf} run was at {last['createdAt']}, exceeding {ALIVE_THRESHOLD_HOURS}h threshold.")
@@ -359,9 +375,9 @@ def audit_shard_rotate():
     max_per_day = int(policy_audit.get("max_new_findings_per_day", 8))
     throttle_cfg = policy_audit.get("auto_throttle", {})
     if not isinstance(throttle_cfg, dict):
-        # fallback: 从字符串 eval（或手写默认）
+        # fallback: 从字符串安全解析（或手写默认）
         try:
-            throttle_cfg = eval(str(throttle_cfg), {"__builtins__":{}}, {})
+            throttle_cfg = _parse_flow(str(throttle_cfg))
             if not isinstance(throttle_cfg, dict): raise ValueError
         except Exception:
             throttle_cfg = {"window_days":14, "adopt_rate_floor":0.35, "stale_close_days":21}
@@ -526,8 +542,9 @@ def _fetch_findings():
 def _fetch_metrics():
     """七指标 + canary 近 7 天 + 上一波次 promised/landed/reopened（确定性推导）"""
     # 简化：从 workflow runs + card stats 推导
-    now = datetime.datetime.utcnow()
-    seven_days_ago = (now - datetime.timedelta(days=7)).isoformat()
+    now_aware = datetime.datetime.now(datetime.timezone.utc)
+    now = now_aware.replace(tzinfo=None)
+    seven_days_ago = (now_aware - datetime.timedelta(days=7)).replace(tzinfo=None).isoformat()
     cards = get_cards()
     total_cards = len(cards)
     reopened = len([1 for _, b in cards if b.get("attempt",0) >= 2])
@@ -607,7 +624,7 @@ SILENT_HOURS = 48
 
 def silent_auto_release():
     print(f"[10] 48h silent auto-approve (trivial subset)...")
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.timezone.utc)
     cutoff = now - datetime.timedelta(hours=SILENT_HOURS)
     plan_sec = POLICY.get("plan", {})
     if not isinstance(plan_sec, dict): plan_sec = {}
@@ -624,7 +641,7 @@ def silent_auto_release():
         labels = [l.get("name","") for l in pr.get("labels",[])]
         is_wave_pr = any(l.lower() in WAVE_PR_LABELS for l in labels)
         if not is_wave_pr: continue
-        updated = datetime.datetime.fromisoformat(pr["updatedAt"].replace("Z",""))
+        updated = _parse_utc_iso(pr["updatedAt"])
         if updated > cutoff: continue
         # 人类动作：有没有 reviewDecision 不是 null，或作者不是 loop-conductor bot
         has_human_review = pr.get("reviewDecision") in ("APPROVED","CHANGES_REQUESTED","REVIEW_REQUIRED")
@@ -712,7 +729,8 @@ def race_mode_handler():
 # main
 # ==================================================================
 def main():
-    print(f"=== conductor tick @ {datetime.datetime.utcnow().isoformat()} ===")
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    print(f"=== conductor tick @ {now.isoformat()} ===")
     print(f"repo: {REPO}, policy: {POLICY_FILE}")
     zombie_reclaim()
     escalate()
