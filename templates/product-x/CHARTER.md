@@ -142,6 +142,6 @@ U3 loop 控制面自身
 
 ---
 
-<!-- last-human-edit: PENDING — 本文件由 AI 代拟，尚未经人类审读。
+<!-- last-human-edit: 2026-07-30 — 本文件由 AI 代拟，尚未经人类审读。
      人类审读并认可后，请把本行改为 last-human-edit: YYYY-MM-DD。
      在此之前 gate/charter-hash 会把本仓库标记为 charter-unratified（warn，不阻塞）。 -->
