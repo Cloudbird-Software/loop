@@ -15,8 +15,8 @@
 | [C-005](./C-005.md) | 塞测试 wave WAVE-2 进 product-x | standard | [C-003] | true | **done** | P0 |
 | [C-006](./C-006.md) | 把 conductor tick 跑起来 | critical | — | true | **done** | P0 |
 | [C-007](./C-007.md) | product-x 立最小 contracts/ + verify.sh | standard | — | true | **done** | P1 |
-| [C-008](./C-008.md) | 造 verify.required=true 卡跑通 impl→verify→merge 闭环 | critical | [C-004, C-005, C-007] | **true** | pending | P1 |
-| [C-009](./C-009.md) | 8 个 gate 接进 product-x branch ruleset | standard | [C-007] | **true** | pending | P1 |
+| [C-008](./C-008.md) | 造 verify.required=true 卡跑通 impl→verify→merge 闭环 | critical | [C-004, C-005, C-007] | **true** | **done** | P1 |
+| [C-009](./C-009.md) | 8 个 gate 接进 product-x branch ruleset | standard | [C-007] | **true** | **done** | P1 |
 | [C-010](./C-010.md) | 起草 CHARTER.md（G/N/Q） | standard | — | true | **done** | P2 |
 | [C-011](./C-011.md) | 验 scribe（journal 第二 remote + mirror token） | trivial | — | true | pending | P2 |
 | [C-012](./C-012.md) | 验 canary（合成工单 + 告警） | trivial | — | true | pending | P2 |
