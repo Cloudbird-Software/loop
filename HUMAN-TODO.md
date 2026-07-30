@@ -83,7 +83,8 @@ lint/test/verify/contract/paths-lease/verdict-binding）。
 本地验证：`python3 conductor/drift_check.py` → "No drift detected. All settings match live rulesets."
 已关闭 drift Incident #55。
 
-**残余风险**（R10-4 承接）：`policy.yml` 的 apply 路径仍是 `echo TODO`。一旦实现 apply，
+**残余风险**（R10-4 承接）：`policy.yml` 的 apply 路径目前是 `::error:: + exit 1`
+（CHARTER N5 禁止自动修正 ruleset）。一旦将来实现 apply，
 必须确保它从 `settings/*.json` **完整**应用（包括 required_status_checks），而不是删掉它。
 R10-4 的验收要求：`gate_settings_roundtrip.py` 还未实现，需 R10-4 创建。
 
@@ -134,7 +135,7 @@ gh api --method POST repos/<org>/<repo>/rulesets --input <ruleset.json>
 **关于 CHARTER N5**：N5 禁止的是**自动化**修正 ruleset（检测漂移→自动改）。
 本次是用户**一次性显式授权**的人工等价操作（用户提供 admin token 并指示"你能做就你做"），
 不违反 N5 的精神。N5 的防线——"不许把 apply 路径接成自动闭环"——仍然有效，
-`policy.yml` 的 apply 仍是 `echo TODO`。
+`policy.yml` 的 apply 是 `::error:: + exit 1`（CHARTER N5 禁止自动改 ruleset）。
 
 ### [ ] C2. product-x 的 required check 名单同步
 
