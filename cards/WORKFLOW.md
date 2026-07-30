@@ -1,5 +1,7 @@
 # WORKFLOW.md — P4 闭环前的暂行工作流程
 
+> **已停用，切回 loopd @2026-07-30**（C-008 闭环达成）
+>
 > 适用范围：从现在起，到 [C-008](./C-008.md) 跑通 impl→verify→VERDICT→merge 全闭环为止。
 > 闭环后切回 loopd 正式体系（CAS + materializer + gates），本文件归档。
 
