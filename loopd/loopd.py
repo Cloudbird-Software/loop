@@ -3,25 +3,72 @@
 
 手册第 5 部分骨架 + 全部 intent 补完。
 5.1–5.4 给出的函数逐字采用；缺失 handler 按同一 @intent 模式最小实现。
+
+E 包高强度测试修复：环境变量缺失时 --help/--version 仍能工作，不 KeyError 崩。
 """
-import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime
+import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime, sys
 
 # ============================================================
-# 全局常量（手册 5.1）
+# 全局常量（手册 5.1）—— 全部用 .get() 给默认值，--help 不崩
 # ============================================================
-E = os.environ
-ROOT = pathlib.Path(E.get("LOOP_ROOT", "/work")); WS = pathlib.Path(E["LOOP_WS"])
-LOOP = ROOT/".loop"; RELAY = LOOP/"relay"
-REPO = f'{E["LOOP_ORG"]}/{E["LOOP_REPO"]}'
-ROLE = E["LOOP_ROLE"].split(","); MODEL = E["LOOP_MODEL"]; SID = E["LOOP_SANDBOX_ID"]
-STATE = LOOP/"daemon.json"
+def _env(): return os.environ
+E = _env()
+
+# 9 个代理变量名（__getattr__ + CFG() 初始化都会用到）
+_PROXIES = {"ROOT","WS","LOOP","RELAY","REPO","ROLE","MODEL","SID","STATE"}
+
+def _cfg():
+    """延迟加载配置：--help 时调用不到环境相关 handler 不会崩；
+    真正干活 handler 调一次就 OK。"""
+    ROOT = pathlib.Path(E.get("LOOP_ROOT", E.get("GITHUB_WORKSPACE", "/workspace")))
+    WS   = pathlib.Path(E.get("LOOP_WS", str(ROOT)))
+    LOOP = ROOT/".loop"
+    RELAY = LOOP/"relay"
+    ORG  = E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER", "Cloudbird-Software"))
+    REPON = E.get("LOOP_REPO", (E.get("GITHUB_REPOSITORY","loop").split("/")[-1] if "/" in E.get("GITHUB_REPOSITORY","/loop") else "loop"))
+    REPO = f"{ORG}/{REPON}"
+    ROLE = [x for x in E.get("LOOP_ROLE", "impl").split(",") if x]
+    MODEL = E.get("LOOP_MODEL", "unknown")
+    SID = E.get("LOOP_SANDBOX_ID", "local-" + uuid.uuid4().hex[:8])
+    STATE = LOOP/"daemon.json"
+    return ROOT, WS, LOOP, RELAY, ORG, REPO, ROLE, MODEL, SID, STATE
+
+# --help/--version 先不实例化（避免 mkpath 等副作用）；handler 内首次访问用 CFG()
+_CFG = None
+def CFG():
+    global _CFG
+    if _CFG is None:
+        ROOT, WS, LOOP, RELAY, ORG, REPO, ROLE, MODEL, SID, STATE = _cfg()
+        LOOP.mkdir(parents=True, exist_ok=True)
+        RELAY.mkdir(parents=True, exist_ok=True)
+        _CFG = {"ROOT":ROOT,"WS":WS,"LOOP":LOOP,"RELAY":RELAY,"ORG":ORG,
+                "REPO":REPO,"ROLE":ROLE,"MODEL":MODEL,"SID":SID,"STATE":STATE}
+        # E包修复：把 9 个变量"物化"到模块全局变量，函数里裸引用不再走 __getattr__
+        for _k, _v in _CFG.items():
+            if _k in _PROXIES:
+                globals().setdefault(_k, _v)
+    return _CFG
+
 lock = threading.RLock()
+
+# ============================================================
+# 兼容层：全局裸变量 ROOT/WS/LOOP/RELAY/REPO/ROLE/MODEL/SID/STATE
+# 用模块 __getattr__ 代理到 CFG()，免改 100 处引用。
+# ============================================================
+_PROXIES = {"ROOT","WS","LOOP","RELAY","REPO","ROLE","MODEL","SID","STATE"}
+def __getattr__(name):
+    if name in _PROXIES:
+        return CFG()[name]
+    raise AttributeError(name)
+
+# 让 dir(loopd) 可见这些变量，减少调试时的意外
+__all__ = list(_PROXIES) + ["lock", "CFG"]
 
 # ============================================================
 # 工具函数（手册 5.1）
 # ============================================================
 def sh(*a, cwd=None, timeout=1800, check=False):
-    p = subprocess.run(list(a), cwd=cwd or WS, capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run(list(a), cwd=cwd or CFG()["WS"], capture_output=True, text=True, timeout=timeout)
     if check and p.returncode: raise RuntimeError(f"{a[:2]} -> {p.returncode}\n{p.stderr[-2000:]}")
     return p
 
@@ -152,9 +199,9 @@ def filemode_thread():                              # LOOP_IO_MODE=file
 @intent("next")
 def h_next(args):
     d = st()
-    if d["session_ordinal"] >= int(E["LOOP_MAX_CARDS_PER_SESSION"]):
+    if d["session_ordinal"] >= int(E.get("LOOP_MAX_CARDS_PER_SESSION", 1)):
         return {"stdout": "RETIRE\n"}
-    deadline = time.time() + int(E["LOOP_NEXT_BLOCK_SEC"])
+    deadline = time.time() + int(E.get("LOOP_NEXT_BLOCK_SEC", 60))
     while time.time() < deadline:
         busy = [b for _, b in cards(("claimed","in_progress"))]
         for it, blk in sorted(cards(("ready",)), key=lambda x: prio(x[1])):
@@ -165,7 +212,7 @@ def h_next(args):
             cid = f"{SID}-{uuid.uuid4().hex[:8]}"
             new = dict(blk, state="claimed", claim_id=cid, model=MODEL,
                        sandbox=SID, session_ordinal=d["session_ordinal"]+1,
-                       lease_until=int(time.time())+int(E["LOOP_LEASE_MIN"])*60,
+                       lease_until=int(time.time())+int(E.get("LOOP_LEASE_MIN", 30))*60,
                        heartbeat_at=int(time.time()))
             if not write_block(it["number"], new, it["updatedAt"]): continue     # 抢卡失败换下一张
             prepare_branch(new["id"])
@@ -179,7 +226,7 @@ def prepare_branch(cid):
     sh("git","-C",str(WS),"fetch","origin","main","--prune", check=True)
     sh("git","-C",str(WS),"reset","--hard","origin/main")
     sh("git","-C",str(WS),"clean","-fdx","-e",".loop")
-    sh("git","-C",str(WS),"switch","-C",f'{E["LOOP_BRANCH_PREFIX"]}/{cid}')
+    sh("git","-C",str(WS),"switch","-C",f'{E.get("LOOP_BRANCH_PREFIX", "loop/card")}/{cid}')
 
 # ============================================================
 # save：落盘一步（手册 5.4 do_save）
@@ -220,20 +267,20 @@ def do_save(msg):
         # 无卡上下文（如 "w0 probe"）：空提交，绝不乱 stage
         sh("git","-C",str(WS),"reset","-q","HEAD","--",":/")
         sh("git","-C",str(WS),"-c","user.name=loop-worker",
-           "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","--allow-empty","-m",msg)
+           "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","--allow-empty","-m",msg)
     else:
         staged = _stage_card_paths(paths)
         if not staged:
             # 没有可 stage 的卡 paths 内容 → 空提交保住 PR 结构
             sh("git","-C",str(WS),"-c","user.name=loop-worker",
-               "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","--allow-empty","-m",msg)
+               "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","--allow-empty","-m",msg)
         else:
             # 自检：staged ⊆ 卡 paths（GLOB 匹配），越界则拒绝
             bad = [s for s in staged if not GLOB([s], paths)]
             if bad:
                 raise RuntimeError(f"OUT_OF_SCOPE staged (not in card paths {paths}): {bad}")
             sh("git","-C",str(WS),"-c","user.name=loop-worker",
-               "-c",f'user.email=loop@{E["LOOP_ORG"]}.invalid',"commit","-m",msg)
+               "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","-m",msg)
     br = sh("git","-C",str(WS),"rev-parse","--abbrev-ref","HEAD").stdout.strip()
     sh("git","-C",str(WS),"push","-u","origin",br,"--force-with-lease", check=True)
     if not json.loads(gh("pr","list","-R",REPO,"--head",br,"--json","number").stdout or "[]"):
@@ -887,17 +934,17 @@ def heartbeat_thread():
         d = st(); c = d.get("card")
         if c:
             b = dict(c["blk"]); b["heartbeat_at"] = int(time.time())
-            b["lease_until"] = int(time.time()) + int(E["LOOP_LEASE_MIN"])*60
+            b["lease_until"] = int(time.time()) + int(E.get("LOOP_LEASE_MIN", 30))*60
             it = json.loads(gh("issue","view",str(c["num"]),"-R",REPO,"--json","updatedAt").stdout)
             write_block(c["num"], b, it["updatedAt"]); st(card={"num": c["num"], "blk": b})
-        time.sleep(int(E["LOOP_HEARTBEAT_SEC"]))
+        time.sleep(int(E.get("LOOP_HEARTBEAT_SEC", 120)))
 
 def autosave_thread():
     while True:
         d = st(); c = d.get("card")
         if c and sh("git","-C",str(WS),"status","--porcelain").stdout.strip():
             do_save(f'wip: {c["blk"]["id"]}')          # 含首次 push 自动开 draft PR
-        time.sleep(int(E["LOOP_AUTOSAVE_SEC"]))
+        time.sleep(int(E.get("LOOP_AUTOSAVE_SEC", 300)))
 
 # ============================================================
 # 僵尸回收（手册 6.1 第1件事本地化，v0.1.5 新增）
@@ -926,7 +973,7 @@ def reap_once():
         has_commit = False
         if cid:
             p = gh("pr","list","-R",REPO,"--head",
-                   f'{E["LOOP_BRANCH_PREFIX"]}/{cid}',"--state","open",
+                   f'{E.get("LOOP_BRANCH_PREFIX", "loop/card")}/{cid}',"--state","open",
                    "--json","number,updatedAt")
             try:
                 for pr in json.loads(p.stdout or "[]"):
