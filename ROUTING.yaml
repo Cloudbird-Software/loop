@@ -53,6 +53,9 @@ routes:
   # 强模型验收（review 环，见 docs/强模型验收环.md）：
   # 产物只能是 .loop/schemas/claim.json 定义的可证伪断言，永不产 PASS/FAIL。
   # 本路由永不做 required check——模型不确定性不能卡合并线。
+  # ★开发期间暂不启用（2026-07-30 用户裁定）：Copilot CLI 的 token 暂不开通，
+  #   改为通过 GitHub Action 调用 copilot。等 WAVE-12 推进到建立该 Action 时再自然开启。
+  #   开发期间不跑强模型验收，不影响其他波次。
   - domain: review
     action: accept
     tier: critical
@@ -68,15 +71,19 @@ routes:
     model: qwen3-max
     metrics: {}
 
-  # 验证工（异构）：与实现工不同 provider —— 这一条由 gate/heterogeneity 在 CI 里强制校验，
-  # 改成与 impl 同 provider 会让 gate 直接红。（2026-07-30 修：此前两侧都写 qwen/qwen3-max，
-  # 注释却声称"不同 provider"，异构在事实上并不存在。）
+  # 验证工（verify）：验证不通过 API 路由执行。
+  # 决定（2026-07-30，用户裁定）：API LLM 只能输出文本，无法运行命令/测试，不能执行真实验证。
+  # 验证机制改为：verifier 沙盒领 V 卡 → 跑命令 → 在 PR 上贴结构化 VERDICT 评论 →
+  # ci.yml 的 verify job（required check）解析 VERDICT，断言 pass + verifier≠impl + head_sha 匹配。
+  # 异构约束（verifier≠impl）在 CI 层强制，不依赖 loopd 过滤，不依赖本路由。
+  # 本路由保留供静态文本预审（可选），但不是验证主体。DEEPSEEK_API_KEY 不再是阻塞项。
   - domain: verify
     action: "*"
     tier: "*"
     provider: deepseek
     model: deepseek-chat
     metrics: {}
+    status: deferred_to_verdict_ci_job
 
   # 实现工：trivial 走便宜档，standard/critical 走主力
   - domain: impl

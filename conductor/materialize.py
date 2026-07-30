@@ -20,7 +20,9 @@
 import json, os, subprocess, sys, pathlib, fnmatch, re, hashlib, datetime
 
 E = os.environ
-REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
+_repo_env = E.get("LOOP_REPO", "product-x")
+# Handle both short name ("loop") and full name ("Cloudbird-Software/loop")
+REPO = _repo_env if "/" in _repo_env else f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{_repo_env}'
 VALID_TIERS = {"trivial", "standard", "critical"}
 CRITICAL_PATTERNS = ["auth", "billing", "migrations", "deploy", ".github", "settings", "contracts"]
 
@@ -73,6 +75,14 @@ def _count_today_hotfix_cards():
 def gh(*a):
     """Run gh CLI, return CompletedProcess."""
     return subprocess.run(["gh", *a], capture_output=True, text=True)
+
+
+def set_milestone(issue_num, milestone_num):
+    """Set milestone on an issue via API (gh issue create --milestone is unreliable)."""
+    if not milestone_num:
+        return
+    gh("api","--method","PATCH",f"/repos/{REPO}/issues/{issue_num}",
+       "-f",f"milestone={milestone_num}")
 
 
 def GLOB(a, b):
@@ -282,9 +292,9 @@ def create_milestone(wave_id, title, role):
     """Create a GitHub milestone for the wave."""
     _enforce_role(role, "Milestone")
     p = gh("api","--method","POST",f"/repos/{REPO}/milestones",
-           "-f","title",f"{wave_id} — {title}",
-           "-f","state","open",
-           "-f","description",f"Milestone for wave {wave_id}")
+           "-f",f"title={wave_id} — {title}",
+           "-f","state=open",
+           "-f",f"description=Milestone for wave {wave_id}")
     if p.returncode == 201:
         ms = json.loads(p.stdout)
         print(f"  → milestone created: #{ms['number']} ({wave_id})")
@@ -320,13 +330,14 @@ def create_parent_issue(wave_id, title, summary, milestone_num, card_count, role
 ## Card Checklist
 """
     # Placeholder — will be updated after sub-issues are created
-    p = gh("issue","create","-R",REPO,
+    args = ["issue","create","-R",REPO,
            "--title",f"[Wave] {wave_id} — {title}",
            "--label","wave",
-           "--milestone",str(milestone_num) if milestone_num else "",
-           "--body",body)
+           "--body",body]
+    p = gh(*args)
     if p.returncode == 0:
         num = int(p.stdout.strip().split("/")[-1])
+        set_milestone(num, milestone_num)
         print(f"  → parent Wave issue: #{num}")
         return num
     print(f"  ⚠ parent issue creation failed: {p.stderr}")
@@ -403,12 +414,11 @@ def create_card_issue(card, milestone_num, parent_num, role):
             "--title",f"[Card] {card.get('id','unnamed')} — {obj}",
             "--label","card",
             "--body",body]
-    if milestone_num:
-        args.extend(["--milestone",str(milestone_num)])
 
     p = gh(*args)
     if p.returncode == 0:
         num = int(p.stdout.strip().split("/")[-1])
+        set_milestone(num, milestone_num)
         print(f"  → Card #{num}: {card.get('id','?')} (O:{obj}, tier:{tier})")
         return num
     print(f"  ⚠ Card creation failed for {card.get('id','?')}: {p.stderr}")
@@ -502,7 +512,8 @@ def materialize_wave(cards, wave_meta):
         update_parent_issue(parent_num, cards, card_issues)
 
     print(f"\n=== Materialization complete: {len(card_issues)} cards, milestone #{milestone_num}, parent #{parent_num} ===")
-    return True
+    # Anti-fake-green: if any card failed to create, return False so main() can exit 1
+    return len(card_issues) == len(cards)
 
 
 def main():
@@ -548,13 +559,20 @@ def main():
         print(f"  ✓ {c.get('id','?')} (tier:{c.get('tier','standard')}, O:{c.get('objective','?')})")
 
     # Materialize each wave
+    failures = 0
     for wave_meta in wave_metas:
         wave_cards = [c for c in valid if c.get("wave") == wave_meta.get("id")]
         if not wave_cards:
             # Try matching by source file
             wave_cards = [c for c in valid if c.get("_source") == wave_meta.get("file")]
         if wave_cards:
-            materialize_wave(wave_cards, wave_meta)
+            ok = materialize_wave(wave_cards, wave_meta)
+            if not ok:
+                failures += 1
+
+    if failures:
+        print(f"\nERROR: {failures} wave(s) had materialization failures — see ⚠ messages above.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

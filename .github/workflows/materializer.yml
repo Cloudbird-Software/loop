@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LOOP_ORG: Cloudbird-Software
-      LOOP_REPO: ${{ github.repository }}
+      LOOP_REPO: loop
       LOOP_ROLE: materializer
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
