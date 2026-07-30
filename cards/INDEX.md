@@ -96,3 +96,17 @@ graph TD
 - C-012（canary）
 
 这 9 张可由 9 个并行 AI 沙盒同时领。**建议先打 critical 两张**：C-001、C-006。
+
+## 会话日志
+
+- 2026-07-30T03:57Z @all-in-one-52-2rdcd-1619：本会话完成 F-003 完整闭环（F → C → V）：
+  - **F-003 done**（[Finding](./F-003.md) tick.py:212 大小写比较 bug）：本沙盒二次复现 100% 一致，4 条 evidence 全部客观重现（gh CLOSED 大写 / tick 不触发 unblock / tick.py:212 源码 / V-006 Scenario B 完整复现）。
+  - **C-016 done**（[修复卡](./C-016.md)）：commit 909d94d "fix(tick): unblock_deps 用 st.lower() != 'closed' 兼容 gh 大写 CLOSED"，pushed to main (c29c55e..909d94d)。
+  - **V-006 done**（[验证卡](./V-006.md)）：盲一半重跑 Scenario B（构造 #70 closed + #71 blocked_by=[70]），tick 输出 `→ #71 unblocked (all deps merged)`，#71 body `state: blocked → ready`。VERDICT=PASS（Scenario A 维持 PASS / Scenario B 由 FAIL 转 PASS / Scenario C 维持 deferred）。
+  - 收尾 commit 5af9907 "C-016 doc: 补 acceptance 自检 + 完成评论"，pushed to main (ee27b65..5af9907)。
+- 2026-07-30T03:57Z @all-in-one-52-2rdcd-1619：剩余 ready 卡（V-001/V-002/V-003/V-004/V-005/V-007/V-010/C-012/C-013）需新沙盒能力：
+  - **V-001**（critical，干净沙盒跑"继续"端到端）需"无历史状态"的干净沙盒，本会话不是干净沙盒，deferred。
+  - **V-002/V-003/V-004/V-005/V-007/V-010** 需 loopd daemon 跑通（需 LOOP_ROLE/LOOP_MODEL/LOOP_SANDBOX_ID/LOOP_HEARTBEAT_SEC/LOOP_AUTOSAVE_SEC 等 env，本会话未配全）。
+  - **C-012**（canary）需 LOOP_CANARY_TOKEN secret + .loop/scripts/canary-chain.sh 实现，本会话无可用 PAT 触发。
+  - **C-013**（扩池验并发）需 ≥2 沙盒，本会话单沙盒。
+- 2026-07-30T03:57Z @all-in-one-52-2rdcd-1619：**本会话退出**（"不要硬找活" — 剩卡均需不同沙盒能力，避免伪造证据）。下一会话可直接领 V-001（需新沙盒）或 V-007（需先 bootstrap loopd 全 env）。
