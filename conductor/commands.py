@@ -11,6 +11,7 @@
 - planner 修订上限 2 轮（超过则拒绝，提示人类直接 Approve 或手动编辑）
 - force-push 同一分支（不开新分支）
 - 只有 wave PR 的评论才响应（非 wave PR 忽略）
+- 只有白名单作者（COMMAND_AUTHORS 或 team.yml）可触发微指令
 
 用法（由 issue_comment workflow 调用）：
   python conductor/commands.py --pr <number> --comment <body> --author <login>
@@ -34,11 +35,49 @@ def sh(*a, **kw):
 
 
 # ============================================================
+# Author whitelist (one-way valve: only whitelisted users trigger commands)
+# ============================================================
+
+def _load_allowed_authors():
+    """加载评论作者白名单。
+
+    优先从环境变量 COMMAND_AUTHORS 读取（逗号分隔）；否则尝试 team.yml
+    （支持 command_authors/members/authors/users 列表，元素可为字符串或
+    含 login 字段的 dict）。返回空集合表示未配置白名单（向后兼容放行）。
+    """
+    raw = E.get("COMMAND_AUTHORS", "").strip()
+    if raw:
+        return {a.strip().lstrip("@") for a in raw.split(",") if a.strip()}
+    # 回退：team.yml
+    for path in ("team.yml", "TEAM.yml", ".loop/team.yml"):
+        p = pathlib.Path(path)
+        if p.exists():
+            try:
+                import yaml
+                data = yaml.safe_load(p.read_text()) or {}
+                if isinstance(data, dict):
+                    for key in ("command_authors", "members", "authors", "users"):
+                        vals = data.get(key)
+                        if isinstance(vals, list):
+                            names = set()
+                            for v in vals:
+                                if isinstance(v, str):
+                                    names.add(v.strip().lstrip("@"))
+                                elif isinstance(v, dict) and v.get("login"):
+                                    names.add(str(v["login"]).strip().lstrip("@"))
+                            if names:
+                                return names
+            except Exception:
+                pass
+    return set()
+
+
+# ============================================================
 # PR / Wave file helpers
 # ============================================================
 
 def get_pr_info(pr_number):
-    """Get PR info: branch, title, body, labels."""
+    """Get PR info: branch, title, body, labels, state."""
     p = gh("pr","view",str(pr_number),"-R",REPO,
            "--json","headRefName,title,body,labels,state")
     if p.returncode != 0:
@@ -157,7 +196,7 @@ def drop_objective(text, obj_id):
             skip = True
             continue
         if skip:
-            # Stop skipping when we hit another objective or a new major section
+            # Stop skipping when they hit another objective or a new major section
             if re.match(r'^#{1,2}\s+(O\d+|##\s)', line) or re.match(r'^O\d+\s*[:：]', line):
                 skip = False
                 new_lines.append(line)
@@ -302,6 +341,13 @@ def execute_command(cmd, arg, wave_file, pr_number, revision_count):
 
 def process_comment(pr_number, comment_body, comment_author):
     """Main entry: process a PR comment for !commands."""
+    # 作者白名单（单向阀门）：非白名单作者的评论直接忽略
+    allowed = _load_allowed_authors()
+    if allowed and comment_author not in allowed:
+        print(f"UNAUTHORIZED_COMMENT_AUTHOR: @{comment_author} not in whitelist "
+              f"({sorted(allowed)})")
+        return {"action": "skip", "reason": f"unauthorized comment author: {comment_author}"}
+
     commands = parse_commands(comment_body)
     if not commands:
         return {"action": "skip", "reason": "no commands found"}

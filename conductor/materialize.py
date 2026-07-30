@@ -15,8 +15,9 @@
 
 单向阀门：materializer 是唯一批量造 Card 的入口（由 workflow 触发保证）。
 脚本自身也校验：若已有同 wave 的 Card issue 存在则跳过（幂等）。
+每个创建 issue 的函数入口处用 _enforce_role(role, create_type) 强制 ROLE_CREATE_MAP。
 """
-import json, os, subprocess, sys, pathlib, fnmatch, re, hashlib
+import json, os, subprocess, sys, pathlib, fnmatch, re, hashlib, datetime
 
 E = os.environ
 REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
@@ -25,7 +26,7 @@ CRITICAL_PATTERNS = ["auth", "billing", "migrations", "deploy", ".github", "sett
 
 # 单向阀门：角色→允许创建的 issue type
 ROLE_CREATE_MAP = {
-    "materializer": {"Card", "Wave", "Milestone"},
+    "materializer": {"Card", "Wave", "Milestone", "Incident"},  # materializer 报告自身物化失败为 Incident
     "auditor":      {"Finding"},
     "planner":      {"Wave"},  # planner 只能提波次 PR，不直接造 Card
     "impl":         set(),     # impl 不能造 Card
@@ -33,6 +34,40 @@ ROLE_CREATE_MAP = {
     "incident":     {"Incident", "Card"},  # Incident 检测器每日最多 2 张 hotfix Card
 }
 INCIDENT_HOTFIX_DAILY_LIMIT = 2
+
+
+def _enforce_role(role, create_type):
+    """单向阀门：校验 role 是否被允许创建 create_type 类型的 issue。
+
+    ROLE_CREATE_MAP 定义角色→可创建类型映射；不匹配则抛 ValueError 说明越权。
+    auditor 只能建 Finding；planner 只能建 Wave；impl/verify 不能建 Card；
+    Incident 检测器每日最多 INCIDENT_HOTFIX_DAILY_LIMIT 张 hotfix Card；只有
+    materializer 能批量造 Card。
+    """
+    if role is None:
+        raise ValueError(
+            f"ROLE_VALVE_VIOLATION: role is required to create {create_type} "
+            f"(caller passed no role)"
+        )
+    allowed_types = ROLE_CREATE_MAP.get(role, set())
+    if create_type not in allowed_types:
+        raise ValueError(
+            f"ROLE_VALVE_VIOLATION: role '{role}' is not allowed to create {create_type} "
+            f"(allowed types for this role: {sorted(allowed_types) if allowed_types else 'none'})"
+        )
+
+
+def _count_today_hotfix_cards():
+    """查当日已创建的 hotfix Card 数量（用于 Incident 检测器每日限额）。"""
+    today = datetime.date.today().isoformat()
+    p = gh("issue", "list", "-R", REPO,
+           "--label", "hotfix", "--state", "all",
+           "--json", "number",
+           "--search", f"created:>={today}")
+    try:
+        return len(json.loads(p.stdout or "[]"))
+    except Exception:
+        return 0
 
 
 def gh(*a):
@@ -243,8 +278,9 @@ def extract_block(body):
 # Milestone creation
 # ============================================================
 
-def create_milestone(wave_id, title):
+def create_milestone(wave_id, title, role):
     """Create a GitHub milestone for the wave."""
+    _enforce_role(role, "Milestone")
     p = gh("api","--method","POST",f"/repos/{REPO}/milestones",
            "-f","title",f"{wave_id} — {title}",
            "-f","state","open",
@@ -270,8 +306,9 @@ def create_milestone(wave_id, title):
 # Parent Wave issue
 # ============================================================
 
-def create_parent_issue(wave_id, title, summary, milestone_num, card_count):
+def create_parent_issue(wave_id, title, summary, milestone_num, card_count, role):
     """Create parent Wave issue that tracks all sub-issues."""
+    _enforce_role(role, "Wave")
     body = f"""# Wave: {wave_id}
 
 {summary}
@@ -321,8 +358,10 @@ def update_parent_issue(parent_num, cards, card_issues):
 # Card issue creation (batch — only materializer does this)
 # ============================================================
 
-def create_card_issue(card, milestone_num, parent_num):
+def create_card_issue(card, milestone_num, parent_num, role):
     """Create a Card issue with full JSON block and metadata."""
+    # 单向阀门：只有 materializer（批量造卡）或 incident（hotfix 卡）可造 Card
+    _enforce_role(role, "Card")
     # Auto-tier
     auto_tier(card)
     # Ensure state is ready for dispatch
@@ -380,8 +419,21 @@ def create_card_issue(card, milestone_num, parent_num):
 # Incident
 # ============================================================
 
-def open_incident(title, body):
-    """校验失败时开 Incident。"""
+def open_incident(title, body, role):
+    """校验失败时开 Incident。
+
+    单向阀门：role 必须有权创建 Incident。Incident 检测器（role='incident'）
+    每日最多 INCIDENT_HOTFIX_DAILY_LIMIT 张 hotfix Card，超限则拒绝并打印
+    INCIDENT_HOTFIX_LIMIT_EXCEEDED。
+    """
+    _enforce_role(role, "Incident")
+    # 每日 hotfix 限额：仅 Incident 检测器（role='incident'）受此约束
+    if role == "incident":
+        count = _count_today_hotfix_cards()
+        if count >= INCIDENT_HOTFIX_DAILY_LIMIT:
+            print(f"INCIDENT_HOTFIX_LIMIT_EXCEEDED: {count} hotfix card(s) "
+                  f"already created today (limit={INCIDENT_HOTFIX_DAILY_LIMIT})")
+            return None
     full_body = "## Materialization Failed\n\n" + body
     p = gh("issue","create","-R",REPO,
            "--title",title,
@@ -390,8 +442,10 @@ def open_incident(title, body):
     if p.returncode == 0:
         num = p.stdout.strip().split("/")[-1]
         print(f"  → opened Incident #{num}: {title}")
+        return num
     else:
         print(f"  ⚠ Incident creation failed: {p.stderr}")
+        return None
 
 
 # ============================================================
@@ -414,18 +468,18 @@ def materialize_wave(cards, wave_meta):
 
     # 1. Create milestone
     print(f"[1/4] Creating milestone for {wave_id}...")
-    milestone_num = create_milestone(wave_id, wave_title)
+    milestone_num = create_milestone(wave_id, wave_title, role="materializer")
 
     # 2. Create parent Wave issue
     print(f"[2/4] Creating parent Wave issue...")
-    parent_num = create_parent_issue(wave_id, wave_title, wave_summary, milestone_num, len(cards))
+    parent_num = create_parent_issue(wave_id, wave_title, wave_summary, milestone_num, len(cards), role="materializer")
 
     # 3. Create Card issues (batch — valve: only materializer does this)
     print(f"[3/4] Materializing {len(cards)} card(s)...")
     card_issues = []
     card_id_to_issue = {}
     for card in cards:
-        num = create_card_issue(card, milestone_num, parent_num)
+        num = create_card_issue(card, milestone_num, parent_num, role="materializer")
         if num:
             card_issues.append((card, num))
             card_id_to_issue[card.get("id")] = num
@@ -484,7 +538,8 @@ def main():
         error_body = "\n".join(f"- {e}" for e in errors)
         open_incident(
             f"Materializer: validation failed for wave",
-            error_body
+            error_body,
+            role="materializer"
         )
         sys.exit(1)
 
