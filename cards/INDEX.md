@@ -38,7 +38,7 @@
 | [V-008](./V-008.md) | impl→verify→VERDICT→merge 全闭环 | C-008 | critical | [C-008] | true | **done** |
 | [V-009](./V-009.md) | 不带 gate 的 PR 被 ruleset 拦下 | C-009 | standard | [C-009] | false | **done** |
 | [V-010](./V-010.md) | auditor/planner 按 G/N/Q 过滤 | C-010 | standard | [C-010] | true | pending |
-| [V-011](./V-011.md) | journal 推第二 remote 成功 | C-011 | trivial | [C-011] | true | pending |
+| [V-011](./V-011.md) | journal 推第二 remote 成功 | C-011 | trivial | [C-011] | true | **done** |
 | [V-012](./V-012.md) | canary 合成工单被检测告警 | C-012 | trivial | [C-012] | false | pending |
 | [V-013](./V-013.md) | 两沙盒并发 CAS+租约+reaper 不出错 | C-013 | standard | [C-013] | false | pending |
 
