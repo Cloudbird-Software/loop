@@ -1,13 +1,74 @@
-# 本 workflow 已迁移到 product-x 仓库（D0 决策，见 DECISIONS.md ADR-002）。
-# 现位置：Cloudbird-Software/product-x/.github/workflows/materializer.yml
-# 触发：push to product-x main, paths waves/**
-# token：product-x workflow 默认 GITHUB_TOKEN（免 conductor app secret）
-# 本文件保留为转发锚点，不再执行任何 job。
-name: materializer (migrated to product-x)
+# loop 侧物化器（ADR-002 修订，见 DECISIONS.md ADR-010）
+#
+# ADR-002 曾把物化器整体迁往 product-x，理由是「工单只应存在于产品仓」。
+# 本次审查（docs/审查裁决-2026-07-30.md）暴露出该决策的一个副作用：
+# 控制面自身的改造工作（门禁、验收环、对齐机制）无处落卡，只能靠人口述，
+# 这正是 F-D「控制面自身零 CI」与 P1-6「接单入口不是一个固定提示词」的同源病根。
+#
+# 修订：product-x 的物化器保持不变（产品工单仍在产品仓）；
+# loop 仓恢复物化器，但只物化 loop 自身的 waves/**，即控制面的自建工单。
+# 两者互不覆盖：卡片 JSON 的 `repo` 字段标明目标仓库，跨仓卡片在 loop 建单并由
+# 领卡者在目标仓开 PR，PR 反向链接回 loop 的 issue。
+name: materializer
+
 on:
+  push:
+    branches: [main]
+    paths:
+      - "waves/**"
+      - "CHARTER.md"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只校验不建单"
+        required: false
+        default: "true"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: materializer-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  noop:
+  materialize:
     runs-on: ubuntu-latest
+    env:
+      LOOP_ORG: Cloudbird-Software
+      LOOP_REPO: ${{ github.repository }}
+      LOOP_ROLE: materializer
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - run: echo "materializer has migrated to product-x repo (see DECISIONS.md ADR-002)"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: python -m pip install --quiet pyyaml
+
+      - name: 校验波次卡片（四项校验 + paths 两两不交叉）
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location("mz", "conductor/materialize.py")
+          mz = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mz)
+          cards, metas = mz.extract_cards("waves")
+          if not cards:
+              print("no cards found in waves/ — nothing to validate")
+              sys.exit(0)
+          errs, valid = mz.validate(cards, mz.load_charter_ids())
+          for e in errs:
+              print("  ✗", e)
+          print(f"cards={len(cards)} valid={len(valid)} errors={len(errs)}")
+          sys.exit(1 if errs else 0)
+          PY
+
+      - name: 物化（建 milestone / 父 issue / 卡片 issue）
+        if: github.event_name == 'push' || github.event.inputs.dry_run == 'false'
+        run: python3 conductor/materialize.py waves
