@@ -1,14 +1,21 @@
-# Trae 沙盒填写卡（loop v0.1.6）
+# Trae 沙盒填写卡（loop v0.2.0）
 
 > 本卡对应手册第 2.2 节七个槽位的逐字段值。建沙盒时按本卡照填即可。
-> 两个关键哈希已由 loop 仓库 v0.1.6 计算填入，无需再算：
-> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.1.6 的 git tree sha；v0.1.6 未动 prompts/，故与 v0.1.2 一致）
-> - `LOOP_BOOTSTRAP_SHA256` = `601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260`（loop 仓库 `loopd/bootstrap.sh` 在 v0.1.6 的 sha256；v0.1.6 未动 bootstrap，故与 v0.1.1 一致）
+> 两个关键哈希已由 loop 仓库 v0.2.0 计算填入，无需再算：
+> - `LOOP_PROMPTS_SHA` = `979736b02639621256599db21f0352d2f0fc5bbe`（loop 仓库 `prompts/` 在 v0.2.0 的 git tree sha；v0.2.0 未动 prompts/，故与 v0.1.2 一致）
+> - `LOOP_BOOTSTRAP_SHA256` = `e886bc2dee0784a07ece948ca97ade4e7b4d9b698383a1cc393aa5de8c3b2b8e`（loop 仓库 `loopd/bootstrap.sh` 在 v0.2.0 的 sha256；包 A 修复了 opencode 资源名 + 填入真实 pin/sha256）
 >
-> **v0.1.6 变更**（相对 v0.1.5）：只动了 `loopd/loopd.py` 的 `GLOB` 函数 + `.loop/smoke.sh` 加 Stage G2 测试。未动 `bootstrap.sh` / `prompts/`，故两个 SHA 不变。
-> - **Fix C**：`GLOB` 去掉 `rstrip("/*")`。旧版把 `'dir/**'` 误剥成字面量 `'dir'`（rstrip 是字符集剥离，不是去后缀），通配符全丢，导致 `paths: [dir/**]` 的卡 `loop save` 提交子文件时误报 `OUT_OF_SCOPE`。改直接 `fnmatch`：Python fnmatch 的 `*` 跨 `/`，`**` 等价于 `*` 也能匹配多级子文件。E2 僵尸交接测试暴露（W1 单文件路径卡不触发）。
+> **v0.2.0 变更**（相对 v0.1.6）：W3–W6 六包并行建设一次性收口。
+> - **包 A**：loopd finding/propose/verdict handler + schema 校验 + occurrences≥3 标题改写 + bootstrap.sh opencode 资源名修复（`opencode-linux-amd64` → `opencode-linux-x64.tar.gz`）+ 真实 pin v1.18.4 / sha256 回填。
+> - **包 B**：conductor 大脑（audit 分片调度 + tier 判定器 + plan inbox 打包 + 48h 静默放行 + race 模式 + occurrences 升 severity + retro.py）。
+> - **包 C**：物化与波次门禁（materialize.py 全量 + 单向阀门强制 + incident 每日 hotfix 限额 + commands.py 作者角色白名单 + wave-gate.yml）。
+> - **包 D**：验证与发布层（gate_verdict.py head_sha 绑定 + gate_testown.py + 盲一半协议文档 + OIDC 部署 workflow + 迁移双脚本 CI）。
+> - **包 E**：升级环 + bench holdout 重放包（upgrade_ring.py + UPSTREAM.yaml 全量整理 + opencode 统一为 sst/opencode）。
+> - **包 F**：接缝 A 路由器 + ROUTING.yaml + mcp.json + DECISIONS.md 收口。
+> - `bootstrap.sh` 有改动（opencode 资源名 + 真实 pin/sha256），故 BOOTSTRAP_SHA256 变更；`prompts/` 未动，PROMPTS_SHA 不变。
 >
-> **v0.1.5 变更**（保留说明）：Fix A 重置 ordinal + Fix B reaper 自治（E2 已验证通过）。
+> **v0.1.6 变更**（保留说明）：Fix C GLOB 去 rstrip + smoke Stage G2。
+> **v0.1.5 变更**（保留说明）：Fix A 重置 ordinal + Fix B reaper 自治。
 
 ---
 
@@ -44,7 +51,7 @@ LOOP_HEARTBEAT_SEC=60
 LOOP_AUTOSAVE_SEC=180
 LOOP_REAPER_SEC=60                       # v0.1.5：僵尸回收扫描间隔（默认 60s，可不填）
 LOOP_BRANCH_PREFIX=agent
-LOOP_BOOTSTRAP_REF=v0.1.6                # bootstrap 的 pin
+LOOP_BOOTSTRAP_REF=v0.2.0                # bootstrap 的 pin
 LOOP_PROMPTS_SHA=979736b02639621256599db21f0352d2f0fc5bbe
 GH_HOST=github.com
 GIT_TERMINAL_PROMPT=0
@@ -58,7 +65,7 @@ GIT_TERMINAL_PROMPT=0
 GH_TOKEN=                                # 人类粘贴 S6 的 PAT（fine-grained：product-x 的 Contents/Issues/PR/Metadata，★绝不给 Workflows）。命名统一：探针/点击器语境记作 WK_PAT，沙盒语境记作 GH_TOKEN，两者是同一枚 S6 PAT
 JOURNAL_MIRROR_TOKEN=                    # 仅 plan-ops-1 沙盒填，W1 可先留空
 LLM_GATEWAY_KEY=                         # 仅 plan-ops-1 沙盒填，接缝A 网关用，W1 可先留空
-LOOP_BOOTSTRAP_SHA256=601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  # v0.1.2 同 v0.1.1（未动 bootstrap）
+LOOP_BOOTSTRAP_SHA256=e886bc2dee0784a07ece948ca97ade4e7b4d9b698383a1cc393aa5de8c3b2b8e  # v0.2.0：包A修复 opencode 资源名 + 真实 pin/sha256
 ```
 
 > `LOOP_BOOTSTRAP_SHA256` 是公开哈希（不是 secret），已填好；环境启动脚本会拿它校验拉下来的 `bootstrap.sh`，不匹配即 `SHA_MISMATCH` 退出。
@@ -130,12 +137,12 @@ loop status; echo; echo "=== waiting for: loop next ==="
 
 ---
 
-### 附：两个 SHA 的复核命令（push 完 v0.1.6 后可随时验）
+### 附：两个 SHA 的复核命令（push 完 v0.2.0 后可随时验）
 
 ```bash
 # LOOP_PROMPTS_SHA（应输出 979736b02639621256599db21f0352d2f0fc5bbe）
-gh api /repos/Cloudbird-Software/loop/git/trees/v0.1.6:prompts --jq .sha
+gh api /repos/Cloudbird-Software/loop/git/trees/v0.2.0:prompts --jq .sha
 
-# LOOP_BOOTSTRAP_SHA256（应输出 601eeffc986529cbe024e4426beab3031fdb20db7c4e463535dcd248362ac260  -）
-curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.1.6/loopd/bootstrap.sh | sha256sum
+# LOOP_BOOTSTRAP_SHA256（应输出 e886bc2dee0784a07ece948ca97ade4e7b4d9b698383a1cc393aa5de8c3b2b8e  -）
+curl -fsSL https://raw.githubusercontent.com/Cloudbird-Software/loop/v0.2.0/loopd/bootstrap.sh | sha256sum
 ```
