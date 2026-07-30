@@ -8,13 +8,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check POLICY_R secret accessibility
+        id: chk
+        env:
+          POLICY_ID: ${{ secrets.POLICY_R_APP_ID }}
+        run: |
+          if [ -z "$POLICY_ID" ]; then
+            echo "has_secret=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::POLICY_R_APP_ID not accessible. Org secret visibility=private but loop repo is public. Ask org admin to grant loop repo access (Settings → Secrets → POLICY_R_APP_ID → Selected repositories → add loop)."
+          else
+            echo "has_secret=true" >> "$GITHUB_OUTPUT"
+          fi
       - id: t
+        if: steps.chk.outputs.has_secret == 'true'
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with: {app-id: "${{ secrets.POLICY_R_APP_ID }}", private-key: "${{ secrets.POLICY_R_APP_KEY }}", owner: "${{ github.repository_owner }}"}
       - name: Compare live ruleset vs settings/*.json
+        if: steps.chk.outputs.has_secret == 'true'
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
           set -e
           python3 conductor/drift_check.py
+      - name: Skip notice (secret not accessible)
+        if: steps.chk.outputs.has_secret != 'true'
+        run: |
+          echo "SKIP: drift check skipped — POLICY_R secret not accessible for this repo."
+          echo "Fix: org admin → Settings → Secrets and variables → Actions → POLICY_R_APP_ID/POLICY_R_APP_KEY → update visibility to 'Selected repositories' and add Cloudbird-Software/loop."
+          echo "After fix, drift will resume on next schedule (every 6h)."
