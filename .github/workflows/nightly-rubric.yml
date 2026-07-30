@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Setup Python
-        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: {python-version: "3.11"}
       - name: Install promptfoo + deps
         run: |
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: {fetch-depth: 200}  # 需要足够历史查 last_audited_sha diff
       - name: Setup Python
-        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: {python-version: "3.11"}
       - name: Install deps
         run: python -m pip install PyYAML --quiet
