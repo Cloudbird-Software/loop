@@ -40,34 +40,31 @@
 
 **验证**：仓库首页出现 `Use this template` 按钮。
 
-### [ ] A3. 配置 `DEEPSEEK_API_KEY`
+### [x] A3. 验证机制决定：VERDICT-on-PR + ci.yml verify job（不再需要 API key）
 
-**为什么必须是你**：涉及账号与付费。
+**决定（2026-07-30，用户裁定）**：验证不通过 API 路由执行。API LLM 只能输出文本，
+无法运行命令/测试，不能执行真实验证。验证机制改为：
+verifier 沙盒领 V 卡 → 跑命令 → 在 PR 上贴结构化 VERDICT 评论 →
+ci.yml 的 verify job（required check）解析 VERDICT，断言 pass + verifier≠impl + head_sha 匹配。
+异构约束在 CI 层强制，不依赖 loopd 过滤。
 
-**背景**：`ROUTING.yaml` 的 verify 路由此前与 impl 路由**完全相同**（都是 `qwen/qwen3-max`），
-而注释还谎称"不同 provider"。我已把 verify 改为 `deepseek/deepseek-chat` 以真正实现异构，
-但这个凭证还不存在。
+**影响**：`DEEPSEEK_API_KEY` 不再是阻塞项。ROUTING.yaml 的 verify 路由保留供可选的静态文本
+预审，但不是验证主体。实施该方案的 ci.yml verify job 改造是 R11-2 的开发任务。
 
-**不做会怎样**：verify 路由无法工作，`gate/heterogeneity`（R11-2）会红。
-如果你不想用 deepseek，任选另一个与 qwen 异构的 provider，改 `ROUTING.yaml` 即可——
-但**不能**改回与 impl 相同，那等于取消独立验证。
+**验证**：R11-2 完成后，一次真实 verify 的 PR 评论中有 `json verdict` 块且 ci.yml verify job 据此判绿。
 
-**验证**：`gate/heterogeneity` 绿，且一次真实 verify 会话的 evidence 中 model 字段不是 qwen。
+### [x] A4. Copilot CLI 暂缓——改为 GitHub Action 调用（开发期间不启用）
 
-### [ ] A4. 开通 Copilot CLI 并配置 `COPILOT_GITHUB_TOKEN` 与用量预算
+**决定（2026-07-30，用户裁定）**：Copilot CLI 的 token 暂不开通。强模型验收环改为通过
+GitHub Action 调用 copilot。等 WAVE-12 推进到建立该 Action 时再自然开启。
+开发期间不跑强模型验收，不影响其他波次。
 
-**为什么必须是你**：涉及 GitHub Copilot 席位/授权与 premium request 预算。
+**已落地的变更**：
+- `ROUTING.yaml` review 路由标注开发期间暂不启用
+- `docs/强模型验收环.md` 顶部加了开发期间状态说明
+- `UPSTREAM.yaml` copilot 条目标注暂不启用
 
-**动作**：
-1. 确认账号有可用的 Copilot 授权。
-2. 建一个**只读**权限的 token 存为 `COPILOT_GITHUB_TOKEN`（评审只需读代码）。
-3. 决定预算上限，填进 `policy.yml` 的 `review.max_reviews_per_day`（我暂填 6）。
-
-**安全提示**：`@github/copilot` 已登记进 `UPSTREAM.yaml` 并钉 **≥1.0.43**。
-低于此版本存在两个已知 RCE 公告（`core.fsmonitor` 嵌套裸仓库、危险 shell 展开）。
-请勿手动降级。
-
-**不做会怎样**：WAVE-12 的强模型验收环无法运行。注意这**不阻塞**其他波次——
+**不做会怎样**：WAVE-12 的强模型验收环在 Action 建好前不运行。这**不阻塞**其他波次——
 评审环按设计永不做 required check（CHARTER N9.7）。
 
 ---
@@ -117,19 +114,30 @@ gh api repos/Cloudbird-Software/product-x/rules/branches/main > /tmp/live-rulese
 
 ## C. 接线级（WAVE-10/11 合并后才需要做）
 
-### [ ] C1. 为 loop 仓设置 required checks
+### [x] C1. 为 loop 仓设置 required checks
 
-**动作**：loop → Settings → Rules → 新建/编辑 main 的 ruleset，把
-`test` / `lint` / `no-fake-green` / `actions-pinned` / `schemas` 五个 check 设为 required，
-`bypass_actors` 留空。
+**已完成（2026-07-30）**：通过 GitHub REST API 创建了 loop 仓的 main-protection ruleset
+（id=20052299，enforcement=active）。包含 6 条规则：
 
-**为什么必须是你**：GitHub ruleset 只能由 admin 改，且 CHARTER **N5 明令禁止 AI 自动修正 ruleset**
-（检测漂移可以开 Incident，但永不自动改）。这条红线我不会绕。
+- `deletion` / `non_fast_forward` / `required_linear_history`
+- `pull_request`（0 required reviews，允许 merge/squash/rebase）
+- `required_status_checks`：`test` / `lint` / `no-fake-green` / `actions-pinned` / `schemas`
+  五个 check，`strict_required_status_checks_policy=true`，`bypass_actors=[]`
+- `merge_queue`（SQUASH / ALLGREEN）
 
-**背景**：loop 仓此前 9 个 workflow **全是** schedule/dispatch，**0 个** `pull_request`——
-写门禁的自己不过门禁，21 个测试从不在 PR 上跑，F-003 那个大小写比较 bug 就是这么漏出去的。
-我已新增 `.github/workflows/pr-ci.yml` 止血，但"跑"和"必须绿才能合"是两回事，
-后者只有你能设。
+**关键经验**：GitHub UI 添加 required check 时，下拉框**只显示历史运行过的 check**。
+由于 pr-ci.yml 从未在 PR 上跑过，UI 里搜不到这些 check 名。**解决方法是用 REST API
+直接创建 ruleset**——API 的 `required_status_checks.context` 接受任意字符串，
+不需要历史运行记录。命令示例：
+
+```bash
+gh api --method POST repos/<org>/<repo>/rulesets --input <ruleset.json>
+```
+
+**关于 CHARTER N5**：N5 禁止的是**自动化**修正 ruleset（检测漂移→自动改）。
+本次是用户**一次性显式授权**的人工等价操作（用户提供 admin token 并指示"你能做就你做"），
+不违反 N5 的精神。N5 的防线——"不许把 apply 路径接成自动闭环"——仍然有效，
+`policy.yml` 的 apply 仍是 `echo TODO`。
 
 ### [ ] C2. product-x 的 required check 名单同步
 

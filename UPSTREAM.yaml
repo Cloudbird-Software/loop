@@ -37,6 +37,8 @@ items:
     note: "A 包登记，E 包全量整理时合并；只当单卡执行器，绝不跨卡调度。仓库名 sst/opencode（GitHub 重定向到 anomalyco/opencode，API 兼容）；sha256 对应资源 opencode-linux-x64.tar.gz"
 
   # ── B 执行体：强模型验收环的执行体（见 docs/强模型验收环.md、DECISIONS.md ADR-004） ──
+  # ★开发期间暂不启用（2026-07-30 用户裁定）：token 暂不开通，改为 GH Action 调用。
+  #   等 WAVE-12 推进到建立该 Action 时再自然开启。
   - name: "@github/copilot"
     seam: B
     kind: cli
