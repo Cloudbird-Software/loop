@@ -20,8 +20,8 @@
 | [C-010](./C-010.md) | 起草 CHARTER.md（G/N/Q） | standard | — | true | **done** | P2 |
 | [C-011](./C-011.md) | 验 scribe（journal 第二 remote + mirror token） | trivial | — | true | **done** | P2 |
 | [C-012](./C-012.md) | 验 canary（合成工单 + 告警） | trivial | — | true | pending | P2 |
-| [C-013](./C-013.md) | 扩到 2-3 沙盒验并发（CAS+租约+reaper） | standard | [C-001, C-005, C-008] | false | pending | P2 |
-| [C-014](./C-014.md) | 修复 F-001：/health 改用 stdlib（零外部依赖） | standard | [F-001] | true | in_progress | P1 |
+| [C-013](./C-013.md) | 扩到 2-3 沙盒验并发（CAS+租约+reaper） | standard | [C-001, C-005, C-008] | **true** | pending | P2 |
+| [C-014](./C-014.md) | 修复 F-001：/health 改用 stdlib（零外部依赖） | standard | [F-001] | true | **done** | P1 |
 
 ### 验证卡 V-0NN
 
@@ -34,7 +34,7 @@
 | [V-005](./V-005.md) | materializer 物化 WAVE-2 过四校验 | C-005 | standard | [C-005] | false | pending |
 | [V-006](./V-006.md) | tick 回收僵尸 + 依赖放行 | C-006 | critical | [C-006] | false | pending |
 | [V-007](./V-007.md) | verify.required=true 卡调 verify.sh 非退化态 | C-007 | standard | [C-007] | false | pending |
-| [V-008](./V-008.md) | impl→verify→VERDICT→merge 全闭环 | C-008 | critical | [C-008] | false | pending |
+| [V-008](./V-008.md) | impl→verify→VERDICT→merge 全闭环 | C-008 | critical | [C-008] | false | **done** |
 | [V-009](./V-009.md) | 不带 gate 的 PR 被 ruleset 拦下 | C-009 | standard | [C-009] | false | pending |
 | [V-010](./V-010.md) | auditor/planner 按 G/N/Q 过滤 | C-010 | standard | [C-010] | false | pending |
 | [V-011](./V-011.md) | journal 推第二 remote 成功 | C-011 | trivial | [C-011] | false | pending |
@@ -46,6 +46,7 @@
 | ID | 关联 | 复现次数 | 复现成功 | 复现失败 | status |
 |---|---|---|---|---|---|
 | [F-001](./F-001.md) | W2-002 / C-008 / V-008 | 1 | 1 | 0 | done |
+| [F-002](./F-002.md) | C-009 / C-014 / V-008 | 1 | 1 | 0 | pending |
 
 ## 依赖图（mermaid）
 

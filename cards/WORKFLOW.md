@@ -4,6 +4,8 @@
 >
 > 适用范围：从现在起，到 [C-008](./C-008.md) 跑通 impl→verify→VERDICT→merge 全闭环为止。
 > 闭环后切回 loopd 正式体系（CAS + materializer + gates），本文件归档。
+>
+> **已知遗留（停用时未修，见 [F-002](./F-002.md)）**：product-x `ci.yml` 缺 `merge_group` 触发器，而 ruleset 19949520 启用了 `merge_queue`（ALLGREEN）规则。后果：任何走 merge queue 的 PR 会永久卡在 AWAITING_CHECKS（队列临时分支 0 check-runs）。C-008 闭环的最后一次合并（PR #53）靠 admin break-glass（临时移除 merge_queue 规则→合并→立即原样恢复）完成。**切回 loopd 前必须先修 F-002**（在 ci.yml `on:` 块加 `merge_group: { branches: [main] }`），否则 loopd 正式体系的 merge queue 门禁仍不可用。
 
 ## 1. 角色定义（暂行期，单 AI 可切换角色）
 
