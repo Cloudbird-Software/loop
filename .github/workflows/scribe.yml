@@ -66,7 +66,7 @@ jobs:
           cat journal-snapshot/daily-report.md
       - name: Commit snapshot to journal repo + push second remote
         env:
-          GH_TOKEN: ${{ secrets.JOURNAL_MIRROR_TOKEN }}
+          GH_TOKEN: ${{ secrets.SCRIBE_GH_TOKEN }}
           JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
           JOURNAL_MIRROR_URL: ${{ vars.JOURNAL_MIRROR_URL }}
           LOOP_ORG: ${{ github.repository_owner }}
