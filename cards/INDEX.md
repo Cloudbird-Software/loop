@@ -21,6 +21,7 @@
 | [C-011](./C-011.md) | 验 scribe（journal 第二 remote + mirror token） | trivial | — | true | pending | P2 |
 | [C-012](./C-012.md) | 验 canary（合成工单 + 告警） | trivial | — | true | pending | P2 |
 | [C-013](./C-013.md) | 扩到 2-3 沙盒验并发（CAS+租约+reaper） | standard | [C-001, C-005, C-008] | false | pending | P2 |
+| [C-014](./C-014.md) | 修复 F-001：/health 改用 stdlib（零外部依赖） | standard | [F-001] | true | in_progress | P1 |
 
 ### 验证卡 V-0NN
 
@@ -44,7 +45,7 @@
 
 | ID | 关联 | 复现次数 | 复现成功 | 复现失败 | status |
 |---|---|---|---|---|---|
-| [F-001](./F-001.md) | W2-002 / C-008 / V-008 | 1 | 1 | 0 | pending |
+| [F-001](./F-001.md) | W2-002 / C-008 / V-008 | 1 | 1 | 0 | done |
 
 ## 依赖图（mermaid）
 
