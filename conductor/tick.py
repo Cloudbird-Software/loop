@@ -15,7 +15,12 @@ E = os.environ
 REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
 ORG = E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))
 POLICY_FILE = E.get("LOOP_POLICY", "policy.yml")
-LOOP_ROOT = pathlib.Path(E.get("LOOP_ROOT", "/workspace"))
+# CI 里 /workspace 不存在且不可写（曾导致 audit_shard_rotate _save_audit_state PermissionError）；
+# 优先用 GITHUB_WORKSPACE（Actions checkout 目录），其次沙盒的 LOOP_ROOT，最后 /workspace 兜底。
+LOOP_ROOT = pathlib.Path(E.get("LOOP_ROOT") or E.get("GITHUB_WORKSPACE") or "/workspace")
+# 控制面仓库：canary/scribe/nightly-rubric/audit/conductor 都跑在 loop（非 product-x）。
+# liveness_check 必须查这里，否则每轮误开 4 张 "no X runs found" Incident 到 product-x。
+CONTROL_REPO = E.get("LOOP_CONTROL_REPO") or E.get("GITHUB_REPOSITORY") or f"{ORG}/loop"
 
 # --- tier 判定：命中这些模式自动 critical ---
 CRITICAL_PATTERNS = [
@@ -261,7 +266,7 @@ def liveness_check():
     threshold = now - datetime.timedelta(hours=ALIVE_THRESHOLD_HOURS)
     checks = ["canary", "scribe", "nightly-rubric", "audit"]
     for wf in checks:
-        p = gh("run","list","-R",REPO,"--workflow",f"{wf}.yml","--limit","1","--json","createdAt,conclusion")
+        p = gh("run","list","-R",CONTROL_REPO,"--workflow",f"{wf}.yml","--limit","1","--json","createdAt,conclusion")
         try:
             runs = json.loads(p.stdout or "[]")
             if not runs:
