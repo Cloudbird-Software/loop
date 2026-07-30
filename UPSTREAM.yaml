@@ -1,3 +1,13 @@
 policy:
   min_age_days: 7
-packages: {}
+# A 包只追加 opencode 条目（接口契约 0.6）；E 包负责全量整理（含字段名 packages→items 统一、
+# 其余依赖补登记）。字段格式照 OPC-v4 P9。
+items:
+  - name: sst/opencode
+    seam: B                      # 接缝 B 执行体，异构验证工（OPC-v4 §1.1）
+    kind: binary
+    pin: "v0.0.0"                # pin：E 包填真实 release tag（与 bootstrap.sh OPENCODE_VERSION 对齐）
+    sha256: "PLACEHOLDER_FILL_BY_UPSTREAM"  # 校验占位，E 包填；bootstrap.sh 据此启用硬校验
+    install: "python3 -c \"import urllib.request; urllib.request.urlretrieve('https://github.com/sst/opencode/releases/download/<tag>/opencode-linux-amd64','/tmp/opencode')\""
+    official_source_only: true   # 只从 sst/opencode 官方 GitHub releases 下载，不从 npm 同名包/第三方源装
+    degrade_path: "verify 沙盒改用 Trae 内置 agent + 便宜异构模型（LOOP_MODEL 仍由派单层强制 != impl.model）；opencode 不可用时异构保证降级为'同模型自验证'并开 Finding 告警"

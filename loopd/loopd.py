@@ -404,8 +404,137 @@ def h_evidence(args):
     return {"stdout": f"EXIT={p.returncode}\n{p.stdout}\n", "stderr": p.stderr}
 
 # ============================================================
-# finding：提发现
+# finding：提发现（卡包 A2）
 # ============================================================
+def _validate_finding(finding):
+    """按 .loop/schemas/finding.json 逐字段校验（标准库，不依赖 jsonschema）。
+
+    拒收条件（全部返回 (False, msg)）：
+      - 非 object 或 缺少 lens/severity/message/path/evidence → MISSING_FIELDS
+      - evidence 字段缺失 → MISSING_FIELDS: ['evidence']（smoke j1 必测）
+      - evidence 为空数组 → NO_EVIDENCE（smoke j1a 必测）
+      - 任一 evidence 项缺 tool/rule_id/location → BAD_EVIDENCE[i]（smoke j1b 必测）
+    """
+    if not isinstance(finding, dict):
+        return False, "finding must be a JSON object"
+    FINDING_REQUIRED = ["lens", "severity", "message", "path", "evidence"]
+    missing = [f for f in FINDING_REQUIRED if f not in finding]
+    if missing:
+        return False, f"MISSING_FIELDS: {missing}"
+    for f in ("lens", "message", "path"):
+        if not isinstance(finding.get(f), str) or not finding[f].strip():
+            return False, f"EMPTY_FIELD: {f}"
+    if finding.get("severity") not in ("low", "medium", "high", "critical"):
+        return False, f"BAD_SEVERITY: {finding.get('severity')}"
+    ev = finding.get("evidence")
+    if not isinstance(ev, list):
+        return False, "NO_EVIDENCE: evidence must be an array"
+    if len(ev) < 1:
+        return False, "NO_EVIDENCE: evidence array must have >=1 item"
+    for i, item in enumerate(ev):
+        if not isinstance(item, dict):
+            return False, f"BAD_EVIDENCE[{i}]: not an object"
+        ev_missing = [k for k in ("tool", "rule_id", "location") if k not in item]
+        if ev_missing:
+            return False, f"BAD_EVIDENCE[{i}]: missing {ev_missing} (每项需含 tool+rule_id+location)"
+        for k in ("tool", "rule_id", "location"):
+            if not isinstance(item.get(k), str) or not item[k].strip():
+                return False, f"BAD_EVIDENCE[{i}]: {k} must be non-empty string"
+    return True, ""
+
+def _extract_finding_block(body):
+    """从 finding issue body 中抽取 ```json finding``` 块为 dict（找不到返回 None）。"""
+    m = "```json finding"
+    if m not in (body or ""):
+        return None
+    seg = body.split(m, 1)[1].split("```", 1)[0]
+    try:
+        return json.loads(seg)
+    except Exception:
+        return None
+
+def _finding_body(finding, fp, occurrences=1):
+    """生成 Finding issue body：原 JSON + fingerprint + occurrences + proposed_card 块。"""
+    finding = dict(finding)
+    finding["occurrences"] = occurrences
+    finding["fingerprint"] = fp
+    # proposed_card 块：为该问题开 impl 检查器卡；occurrences>=3 时 _enforce_checker_title 会改标题
+    proposed_card = {
+        "schema": 1,
+        "id": f"chk-{fp[:8]}",
+        "tier": "standard",
+        "role": "impl",
+        "paths": [finding.get("path", "")],
+        "charter": ["G0"],
+        "title": f"为 {finding.get('lens', 'lens')} finding #{fp[:8]} 写一个自动检查器",
+        "acceptance": [
+            "新增确定性工具/规则能在本地或 CI 中复现本 finding 的判定",
+            "同一类问题新实例不会再以裸 finding 形式出现（由检查器以 Card 形式发出）",
+        ],
+    }
+    finding = _enforce_checker_title(finding, proposed_card)
+    return (
+        f"```json finding\n{json.dumps(finding, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"Fingerprint: `{fp}`  \n"
+        f"Occurrences: **{occurrences}**  \n"
+        f"Lens: `{finding['lens']}` | Severity: `{finding['severity']}`\n\n"
+        f"---\n\n"
+        f"## Proposed Card\n\n"
+        f"```json loop\n{json.dumps(proposed_card, indent=2, ensure_ascii=False)}\n```"
+    )
+
+def _finding_title(finding):
+    return f"[Finding] {finding['lens']}: {finding['message'][:60]}"
+
+def _enforce_checker_title(finding, proposed_card=None):
+    """occurrences>=3 时把 proposed_card 标题改写为「为 X 写一个检查器」。
+
+    X = finding.lens（若有唯一 rule_id，则 X = lens.rule_id，让检查器更具体）。
+    当 proposed_card 传入时就地修改其 title；始终返回 finding（不返回 tuple，
+    避免 caller 把 tuple 当成 finding dict 用）。
+    """
+    occ = finding.get("occurrences", 1)
+    if occ < 3:
+        return finding
+    ev = finding.get("evidence") or []
+    rule_ids = sorted({e.get("rule_id", "") for e in ev if isinstance(e, dict) and e.get("rule_id")})
+    if len(rule_ids) == 1:
+        x = f"{finding['lens']}.{rule_ids[0]}"
+    else:
+        x = finding["lens"]
+    new_title = f"为 {x} 写一个检查器"
+    if proposed_card is not None:
+        proposed_card["title"] = new_title
+    return finding
+
+def _bump_occurrences(ex_issue, fp, new_finding):
+    """对已存在的 finding issue 累加 occurrences；>=3 时改写 proposed_card 标题为「为 X 写一个检查器」。
+
+    返回 (new_body, new_occurrences)；无法解析旧 body 返回 (None, 0)。
+    """
+    body = ex_issue.get("body", "") or ""
+    old_finding = _extract_finding_block(body)
+    if old_finding is None:
+        return None, 0
+    occ = int(old_finding.get("occurrences", 1)) + 1
+    # 合并 evidence：去重（按 tool+rule_id+location）
+    old_ev = old_finding.get("evidence") or []
+    seen = set()
+    merged = []
+    for e in list(old_ev) + list(new_finding.get("evidence") or []):
+        key = (e.get("tool",""), e.get("rule_id",""), e.get("location",""))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(e)
+    old_finding["evidence"] = merged
+    old_finding["occurrences"] = occ
+    # 重新生成 finding body（proposed_card 块的标题会被 _enforce_checker_title 改写）
+    new_body = _finding_body(old_finding, fp, occurrences=occ)
+    # 保留原 body 中 finding 块之后的人类内容（如有 comment 在 body 末尾）
+    head = body.split("```json finding", 1)[0] if "```json finding" in body else ""
+    return head + new_body, occ
+
 @intent("finding")
 def h_finding(args):
     if not args:
@@ -417,32 +546,61 @@ def h_finding(args):
         finding = json.loads(fpath.read_text())
     except Exception as e:
         return {"code": 1, "stderr": f"BAD_JSON: {e}\n"}
-    # 校验必需字段
-    required = ["lens", "severity", "message", "path"]
-    missing = [f for f in required if f not in finding]
-    if missing:
-        return {"code": 1, "stderr": f"MISSING_FIELDS: {missing}\n"}
+    # 按 finding.json schema 校验（含无证据拒收）
+    ok, err = _validate_finding(finding)
+    if not ok:
+        return {"code": 1, "stderr": f"REJECTED: {err}\n"}
     # 指纹去重: sha256(lens + path + message)
     fp = hashlib.sha256(
         f"{finding['lens']}|{finding['path']}|{finding['message']}".encode()
     ).hexdigest()[:16]
-    # 检查是否已存在
+    finding["fingerprint"] = fp
+    # 检查是否已存在同指纹 finding
     existing = gh("issue","list","-R",REPO,"--label","finding","--limit","200",
                   "--json","number,body").stdout
+    ex_match = None
     for ex in json.loads(existing or "[]"):
         if fp in (ex.get("body") or ""):
-            return {"stdout": f"DUPLICATE (fingerprint {fp} already filed as #{ex['number']})\n"}
-    # 开 Finding issue
-    body = f"```json finding\n{json.dumps(finding, indent=2)}\n```\n\nFingerprint: `{fp}`"
+            ex_match = ex
+            break
+    if ex_match:
+        # DUPLICATE：累加 occurrences；>=3 时改写 proposed_card 标题为"为 X 写一个检查器"
+        new_body, occ = _bump_occurrences(ex_match, fp, finding)
+        if new_body is not None:
+            gh("issue","edit",str(ex_match["number"]),"-R",REPO,"--body",new_body)
+        return {"stdout": f"DUPLICATE (fingerprint {fp} already filed as #{ex_match['number']}, occurrences={occ})\n"}
+    # 新 finding：occurrences=1（<3 不触发标题改写）
+    finding["occurrences"] = 1
+    finding = _enforce_checker_title(finding)
+    body = _finding_body(finding, fp)
     p = gh("issue","create","-R",REPO,
-           "--title",f"[Finding] {finding['lens']}: {finding['message'][:60]}",
+           "--title",_finding_title(finding),
            "--label","finding","--body",body)
     num = p.stdout.strip().split("/")[-1] if p.stdout.strip() else "?"
     return {"stdout": f"OK (Finding #{num})\n"}
 
 # ============================================================
-# propose：提波次
+# propose：提波次（卡包 W4-1）
 # ============================================================
+def _wave_pr_body(fpath):
+    """波次 PR 正文：wave 内容 + '机器自检' 占位段（planner 负责填，卡包 W4-1）。"""
+    try:
+        content = fpath.read_text()
+    except Exception:
+        content = "(无法读取波次文件)"
+    return (
+        "## Wave Proposal\n\n"
+        f"{content}\n\n"
+        "---\n\n"
+        "## 机器自检\n\n"
+        "> 占位段：planner 须在物化前把 spec-kit `analyze` + `checklist` 输出粘到本段。\n"
+        "> `loop propose` 只负责开 PR（仅允许改 `waves/**`），不替 planner 跑自检。\n\n"
+        "- [ ] `speckit.analyze` 一致性/覆盖度分析通过\n"
+        "- [ ] `speckit.checklist` 清单逐条自查通过\n"
+        "- [ ] 卡片 paths 两两无 glob 交叉\n"
+        "- [ ] 每张卡 charter 映射齐全\n"
+    )
+
 @intent("propose")
 def h_propose(args):
     if not args:
@@ -458,13 +616,43 @@ def h_propose(args):
     if bad:
         return {"code": 1, "stderr": f"OUT_OF_SCOPE (only waves/** allowed): {bad}\n"}
     do_save(f"propose: {args[0]}")
-    p = gh("pr","create","-R",REPO,"--fill","--head",br,"--base","main",
-           "--title",f"Wave proposal: {args[0]}")
+    p = gh("pr","create","-R",REPO,"--head",br,"--base","main",
+           "--title",f"Wave proposal: {args[0]}",
+           "--body",_wave_pr_body(fpath))
     return {"stdout": f"OK (PR: {p.stdout.strip()})\n"}
 
 # ============================================================
-# verdict：交裁决
+# verdict：交裁决（接口契约 0.6 + 卡包 V3/V2）
 # ============================================================
+VERDICT_REQUIRED = ["head_sha", "blind_phase_commit", "artifact_digest", "test_plan_version", "acs"]
+
+def _validate_verdict(verdict):
+    """按接口契约 0.6 的 VERDICT schema 校验（标准库逐字段，不依赖 jsonschema 运行时）。"""
+    if not isinstance(verdict, dict):
+        return False, "verdict must be a JSON object"
+    missing = [f for f in VERDICT_REQUIRED if f not in verdict]
+    if missing:
+        return False, f"MISSING_FIELDS: {missing}"
+    for f in ("head_sha", "blind_phase_commit", "artifact_digest", "test_plan_version"):
+        if not isinstance(verdict.get(f), str) or not verdict[f].strip():
+            return False, f"EMPTY_FIELD: {f}"
+    acs = verdict.get("acs")
+    if not isinstance(acs, list) or len(acs) < 1:
+        return False, "NO_ACS: acs array must have >=1 item"
+    for i, ac in enumerate(acs):
+        if not isinstance(ac, dict):
+            return False, f"BAD_AC[{i}]: not an object"
+        for k in ("id", "pass", "evidence"):
+            if k not in ac:
+                return False, f"BAD_AC[{i}]: missing {k} (每项需含 id/pass/evidence)"
+        if not isinstance(ac.get("id"), str) or not ac["id"].strip():
+            return False, f"BAD_AC[{i}]: id must be non-empty string"
+        if not isinstance(ac.get("pass"), bool):
+            return False, f"BAD_AC[{i}]: pass must be bool"
+        if not isinstance(ac.get("evidence"), str) or not ac["evidence"].strip():
+            return False, f"BAD_AC[{i}]: evidence must be non-empty string (形如 文件::用例名)"
+    return True, ""
+
 @intent("verdict")
 def h_verdict(args):
     if not args:
@@ -476,13 +664,20 @@ def h_verdict(args):
         verdict = json.loads(fpath.read_text())
     except Exception as e:
         return {"code": 1, "stderr": f"BAD_JSON: {e}\n"}
+    # 按接口契约 0.6 VERDICT schema 校验
+    ok, err = _validate_verdict(verdict)
+    if not ok:
+        return {"code": 1, "stderr": f"REJECTED: {err}\n"}
     d = st(); c = d.get("card")
     if not c:
         return {"code": 1, "stderr": "NO_ACTIVE_CARD\n"}
-    # 校验 head_sha 绑定
+    # head_sha 绑定校验（卡包 V3/V2）：head_sha ≠ 当前 HEAD → 拒收并提示重跑
     head = sh("git","-C",str(WS),"rev-parse","HEAD").stdout.strip()
-    if verdict.get("head_sha") and verdict["head_sha"] != head:
-        return {"code": 1, "stderr": f"SHA_MISMATCH: verdict={verdict['head_sha'][:8]} actual={head[:8]}\n"}
+    if verdict["head_sha"] != head:
+        return {"code": 1, "stderr": (
+            f"SHA_MISMATCH: verdict head_sha={verdict['head_sha'][:8]} actual HEAD={head[:8]}\n"
+            f"VERDICT 绑定的 head_sha 已过期（PR 有新 commit）。请重跑 verifier 阶段二/三"
+            f"（执行定位 + 结论），用最新 HEAD 重新生成 VERDICT 后再 loop verdict。\n")}
     # 填 verifier_model
     verdict["verifier_model"] = MODEL
     body = f"## VERDICT\n\n```json verdict\n{json.dumps(verdict, indent=2)}\n```"
