@@ -106,9 +106,19 @@ for i in $(seq 1 40); do
   sleep 5
 done
 log "  -> checks completed (ok=$CHECKS_OK) after ${i} polls"
-# 入队（不因 gh 错误而中断 set -e）
-ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1) || true
-log "  -> enqueue result: $ENQ"
+# 入队（重试：merge queue 偶发 "required status checks are expected" timing 问题）
+ENQ=""
+ENQ_OK=0
+for i in $(seq 1 6); do
+  ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1) || true
+  if echo "$ENQ" | grep -q '"mergeQueueEntry"'; then
+    ENQ_OK=1
+    break
+  fi
+  log "  -> enqueue attempt $i failed (timing?), retry in 15s: $(echo "$ENQ" | tr -d '\n' | head -c 200)"
+  sleep 15
+done
+log "  -> enqueue result (ok=$ENQ_OK after $i attempts): $ENQ"
 # 等待合并生效（merge queue 处理 + 状态检查），最多轮询 420 秒（7min，覆盖 min_entries_to_merge_wait_minutes=5）
 MERGED_OK=0
 for i in $(seq 1 140); do
