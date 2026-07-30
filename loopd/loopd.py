@@ -267,20 +267,20 @@ def do_save(msg):
         # 无卡上下文（如 "w0 probe"）：空提交，绝不乱 stage
         sh("git","-C",str(WS),"reset","-q","HEAD","--",":/")
         sh("git","-C",str(WS),"-c","user.name=loop-worker",
-           "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","--allow-empty","-m",msg)
+           "-c",f'user.email=loop@{E.get("LOOP_ORG", "Cloudbird-Software")}.invalid',"commit","--allow-empty","-m",msg)
     else:
         staged = _stage_card_paths(paths)
         if not staged:
             # 没有可 stage 的卡 paths 内容 → 空提交保住 PR 结构
             sh("git","-C",str(WS),"-c","user.name=loop-worker",
-               "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","--allow-empty","-m",msg)
+               "-c",f'user.email=loop@{E.get("LOOP_ORG", "Cloudbird-Software")}.invalid',"commit","--allow-empty","-m",msg)
         else:
             # 自检：staged ⊆ 卡 paths（GLOB 匹配），越界则拒绝
             bad = [s for s in staged if not GLOB([s], paths)]
             if bad:
                 raise RuntimeError(f"OUT_OF_SCOPE staged (not in card paths {paths}): {bad}")
             sh("git","-C",str(WS),"-c","user.name=loop-worker",
-               "-c",f'user.email=loop@{E.get("LOOP_ORG", Cloudbird-Software)}.invalid',"commit","-m",msg)
+               "-c",f'user.email=loop@{E.get("LOOP_ORG", "Cloudbird-Software")}.invalid',"commit","-m",msg)
     br = sh("git","-C",str(WS),"rev-parse","--abbrev-ref","HEAD").stdout.strip()
     sh("git","-C",str(WS),"push","-u","origin",br,"--force-with-lease", check=True)
     if not json.loads(gh("pr","list","-R",REPO,"--head",br,"--json","number").stdout or "[]"):

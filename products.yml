@@ -1,0 +1,46 @@
+# products.yml — 产品仓注册表（loop 控制面唯一真源）
+#
+# 用途：
+#   1. template-sync fan-out：loop 侧种子文件演进时，按本表向各产品仓开 PR。
+#   2. 合规巡检：gate/loop-conformance 的巡检面按本表枚举。
+#   3. scribe / canary / conductor 的跨仓操作目标，全部读本表，不再散落硬编码。
+#
+# 铁律：
+#   - 新产品仓必须先登记进本表，才允许被 loop 的任何 workflow 触碰。
+#   - 本表由人类维护（新建产品仓是人类动作）；AI 不得自行增删条目。
+#   - loop 对产品仓的写操作一律走 GitHub App token（CONDUCTOR_APP），不使用 PAT（CHARTER N10）。
+
+schema: 1
+
+products:
+  - name: product-x
+    repo: Cloudbird-Software/product-x
+    role: template            # template | product
+    # template 角色的仓库是"种子"：它自身也受全部门禁约束，
+    # 且是 loop 机制变更的唯一端到端集成测试床（先在这里证明可工作，才允许 fan-out）。
+    default_branch: main
+    loop_pin_file: LOOP.yml
+    enabled: true
+    notes: "样板仓。真实产品由本仓 Use this template 生成，生成后 role 改为 product。"
+
+# fan-out 策略
+sync:
+  # 种子文件：loop 侧演进时需要向下游产品仓同步的文件白名单。
+  # 只列"内容型"文件；机制型文件永远不同步（产品仓不持有机制副本，见 CHARTER N9）。
+  seed_files:
+    - path: LOOP.yml
+      mode: create-only        # 已存在则不覆盖（产品仓自己的 pin 与开关是它自己的）
+    - path: .github/workflows/loop-ci.yml
+      mode: replace            # 薄壳文件，必须与 loop 侧保持逐字一致
+    - path: .github/workflows/loop-gates.yml
+      mode: replace
+    - path: .github/workflows/loop-review.yml
+      mode: replace
+    - path: CHARTER.md
+      mode: create-only        # 人类的东西，永不覆盖
+    - path: .github/CODEOWNERS
+      mode: create-only
+  # fan-out 产出的是 PR，不是直接 push。产品仓侧照常过全部门禁 + 强模型验收 + 复现，
+  # 不因为"来自 loop"而享受任何豁免。
+  open_pr_only: true
+  pr_label: loop-sync

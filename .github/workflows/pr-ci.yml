@@ -1,0 +1,216 @@
+name: pr-ci
+# 控制面自身的 CI（审查裁决 F-D 止血）。
+#
+# 背景：截至 2026-07-30，loop 仓 9 个 workflow 全是 schedule/dispatch，**0 个 pull_request**。
+# 后果：tests/ 下的测试从不在 PR 上跑；F-003（tick.py 大小写比较 bug）正因此漏出。
+# "写门禁的自己不过门禁"是整个体系可信度的根，故本 workflow 是最高优先级。
+#
+# 铁律（CHARTER N5）：本文件里不允许出现 `|| true`、`set +e` 吞退出码、
+# 或"探不到文件就 SKIP 且 exit 0"的模式。任何步骤不可用必须显式失败。
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # test —— 单元测试。这是 required check 的最小集之一。
+  # ============================================================
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with: {python-version: "3.11"}
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install PyYAML pytest
+      - name: pytest
+        run: |
+          set -euo pipefail
+          python -m pytest -q
+
+  # ============================================================
+  # lint —— 语法与静态自检。不引入任何新的第三方 linter。
+  # ============================================================
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with: {python-version: "3.11"}
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip PyYAML
+      - name: py_compile 全部 Python 源
+        run: |
+          set -euo pipefail
+          find . -name '*.py' -not -path './.git/*' -print0 \
+            | xargs -0 -n1 python -m py_compile
+          echo "py_compile OK"
+      - name: YAML 语法校验（workflows / policy / ROUTING / UPSTREAM / products）
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, sys, yaml
+          files = sorted(
+              glob.glob(".github/workflows/*.yml")
+              + ["policy.yml", "ROUTING.yaml", "UPSTREAM.yaml", "products.yml",
+                 "settings/environments.yml"]
+          )
+          bad = []
+          for f in files:
+              try:
+                  yaml.safe_load(open(f, encoding="utf-8"))
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          if bad:
+              print("YAML 校验失败:")
+              for b in bad:
+                  print("  ✗", b)
+              sys.exit(1)
+          print(f"YAML OK ({len(files)} files)")
+          PY
+      - name: JSON schema 文件语法校验
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, json, sys
+          bad = []
+          for f in sorted(glob.glob(".loop/schemas/*.json") + glob.glob("settings/*.json")):
+              try:
+                  json.load(open(f, encoding="utf-8"))
+              except Exception as e:
+                  bad.append(f"{f}: {e}")
+          if bad:
+              for b in bad:
+                  print("  ✗", b)
+              sys.exit(1)
+          print("JSON OK")
+          PY
+
+  # ============================================================
+  # no-fake-green —— 防"假绿"回归（审查裁决 P1-1，CHARTER N5）。
+  # 6 处假绿已在本波次修复；本 job 保证它们不会悄悄长回来。
+  # ============================================================
+  no-fake-green:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: 扫描 workflow 中的吞错模式
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, re, sys
+
+          # 允许清单：确有正当理由的吞错点，必须在该行或上一行写明 `fake-green-ok: <理由>`。
+          # 这个"例外必须写明理由"的设计是刻意的：假绿之所以能长期存在，
+          # 就是因为它可以不留痕迹地混进来（审查裁决 P1-1）。
+          ALLOW_MARK = "fake-green-ok:"
+          PATTERNS = [
+              (r"\|\|\s*true\b", "`|| true` 吞掉失败"),          # fake-green-ok: 扫描器自身的模式定义
+              (r"^\s*set\s+\+e\b", "`set +e` 关闭错误传播"),      # fake-green-ok: 扫描器自身的模式定义
+              (r"continue-on-error:\s*true", "continue-on-error"),  # fake-green-ok: 扫描器自身的模式定义
+          ]
+          violations = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              lines = open(f, encoding="utf-8").read().splitlines()
+              for i, line in enumerate(lines):
+                  stripped = line.strip()
+                  if stripped.startswith("#"):
+                      continue  # 注释行不算实际行为
+                  ctx = line + (lines[i - 1] if i else "")
+                  if ALLOW_MARK in ctx:
+                      continue
+                  for pat, desc in PATTERNS:
+                      if re.search(pat, line):
+                          violations.append(f"{f}:{i+1}: {desc} → {stripped}")
+          if violations:
+              print("检出假绿模式（CHARTER N5 禁止）。若确有正当理由，"
+                    "在该行或上一行加注释 `fake-green-ok: <理由>`：")
+              for v in violations:
+                  print("  ✗", v)
+              sys.exit(1)
+          print("no-fake-green OK")
+          PY
+
+  # ============================================================
+  # actions-pinned —— 所有 action 必须钉完整 SHA（CHARTER N4 / 供应链）。
+  # ============================================================
+  actions-pinned:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: "校验 uses 引用全部钉到 40 位 SHA"
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, re, sys
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
+              for i, line in enumerate(open(f, encoding="utf-8").read().splitlines()):
+                  s = line.strip()
+                  # 只认 YAML 里真正的 uses 键（`- uses:` / `uses:`），避免误伤脚本正文
+                  if not (s.startswith("uses:") or s.startswith("- uses:")):
+                      continue
+                  ref = s.split("uses:", 1)[1].strip().strip("'\"").split()[0]
+                  if ref.startswith("./") or ref.startswith("docker://"):
+                      continue
+                  if "@" not in ref:
+                      bad.append(f"{f}:{i+1}: 无 ref → {ref}")
+                      continue
+                  sha = ref.rsplit("@", 1)[1]
+                  # 允许引用本组织 reusable workflow，但同样必须是 40 位 SHA
+                  if not re.fullmatch(r"[0-9a-f]{40}", sha):
+                      bad.append(f"{f}:{i+1}: 未钉 SHA → {ref}")
+          if bad:
+              for b in bad:
+                  print("  ✗", b)
+              sys.exit(1)
+          print("actions-pinned OK")
+          PY
+
+  # ============================================================
+  # schemas —— 卡片/证据/断言 schema 的自洽性。
+  # ============================================================
+  schemas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with: {python-version: "3.11"}
+      - name: 校验 waves/ 里的卡片能被 materializer 解析且过四校验
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip PyYAML >/dev/null
+          python - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, ".")
+          from conductor.materialize import extract_cards, load_charter_ids, validate
+
+          if not pathlib.Path("waves").exists():
+              print("waves/ 不存在，跳过（本仓暂无波次声明）")
+              sys.exit(0)
+          cards, metas = extract_cards("waves/")
+          print(f"解析到 {len(cards)} 张卡 / {len(metas)} 个波次文件")
+          if not cards:
+              print("waves/ 存在但未解析到任何卡片 → 视为格式错误")
+              sys.exit(1)
+          errors, valid = validate(cards, load_charter_ids())
+          if errors:
+              for e in errors:
+                  print("  ✗", e)
+              sys.exit(1)
+          print(f"四校验通过：{len(valid)} 张卡")
+          PY

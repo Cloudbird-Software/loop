@@ -28,6 +28,6 @@ jobs:
             cat settings/main-protection.json
           else
             echo "APPLYING ruleset (environment: policy, required reviewers approved)"
-            # TODO: gh api -X PUT /orgs/$LOOP_ORG/rulesets/<id> --input settings/main-protection.json
-            echo "TODO: implement apply logic"
+            echo "::error::apply 未实现：CHARTER N5 禁止自动修正规则集；ruleset 变更必须由人类手工执行。"
+            exit 1
           fi

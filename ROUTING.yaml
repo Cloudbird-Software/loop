@@ -22,8 +22,12 @@ providers:
   qwen:
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     api_key_env: "DASHSCOPE_API_KEY"
+  deepseek:
+    # 验证工专用池：必须与实现工的 provider 不同（异构验证的机器保证，不是文档约定）。
+    base_url: "https://api.deepseek.com/v1"
+    api_key_env: "DEEPSEEK_API_KEY"
   strongest:
-    # planner/最强模型走这里；key 复用 plan-ops-1 沙盒的 LLM_GATEWAY_KEY
+    # planner/评审/最强模型走这里；key 复用 plan-ops-1 沙盒的 LLM_GATEWAY_KEY
     base_url: "https://api.openai.com/v1"
     api_key_env: "LLM_GATEWAY_KEY"
 
@@ -46,12 +50,32 @@ routes:
     model: gpt-5
     metrics: {}
 
-  # 验证工（异构）：与实现工不同 provider，走 qwen 池
-  - domain: verify
-    action: "*"
+  # 强模型验收（review 环，见 docs/强模型验收环.md）：
+  # 产物只能是 .loop/schemas/claim.json 定义的可证伪断言，永不产 PASS/FAIL。
+  # 本路由永不做 required check——模型不确定性不能卡合并线。
+  - domain: review
+    action: accept
+    tier: critical
+    provider: strongest
+    model: gpt-5
+    seam_b: copilot-cli
+    metrics: {}
+  # claim 的复现判定：必须与提出 claim 的模型异构（防自证，CHARTER N6）。
+  - domain: review
+    action: reproduce
     tier: "*"
     provider: qwen
     model: qwen3-max
+    metrics: {}
+
+  # 验证工（异构）：与实现工不同 provider —— 这一条由 gate/heterogeneity 在 CI 里强制校验，
+  # 改成与 impl 同 provider 会让 gate 直接红。（2026-07-30 修：此前两侧都写 qwen/qwen3-max，
+  # 注释却声称"不同 provider"，异构在事实上并不存在。）
+  - domain: verify
+    action: "*"
+    tier: "*"
+    provider: deepseek
+    model: deepseek-chat
     metrics: {}
 
   # 实现工：trivial 走便宜档，standard/critical 走主力

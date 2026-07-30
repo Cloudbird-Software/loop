@@ -10,6 +10,7 @@ on:
         required: false
         default: ""
 permissions: {contents: read, issues: write, actions: write, pull-requests: read}
+concurrency: {group: audit, cancel-in-progress: false}
 jobs:
   audit-shards:
     runs-on: ubuntu-latest
@@ -19,7 +20,7 @@ jobs:
         with: {fetch-depth: 500}  # 需足够历史算 last_audited_sha..HEAD diff
 
       - name: Setup Python
-        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: {python-version: "3.11"}
 
       - name: Install deps
@@ -74,6 +75,7 @@ jobs:
           LOOP_REPO: ${{ github.event.repository.name }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
+          # fake-green-ok: 下方以 EXIT=$? / exit $EXIT 显式传播退出码，set +e 只为拿到 $?
           set +e
           python3 << 'PYEOF'
           import json, pathlib, os, subprocess, datetime, tempfile, sys, hashlib
@@ -184,7 +186,9 @@ jobs:
           print(f'== runs: {len(QUOTA_RUNS)}; new findings: {len(NEW_FINDINGS)} (quota cap {quota_left}) ==')
           print(json.dumps(summary, indent=2, ensure_ascii=False))
           PYEOF
-          echo "exit=$?"
+          EXIT=$?
+          echo "exit=$EXIT"
+          exit $EXIT
 
       # ============================================================
       # Step 3: 对今日超 quota 未发的 + 去重命中 + occurrences bump 打 checker-needed
@@ -197,13 +201,16 @@ jobs:
           LOOP_REPO: ${{ github.event.repository.name }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
+          # fake-green-ok: 下方以 EXIT=$? / exit $EXIT 显式传播退出码，set +e 只为拿到 $?
           set +e
           python -c "
           import sys; sys.path.insert(0, '.')
           from conductor import tick as T
           T.occurrences_bump_severity()
           "
-          echo "exit=$?"
+          EXIT=$?
+          echo "exit=$EXIT"
+          exit $EXIT
 
       # ============================================================
       # Step 4: inbox pack（给 P3 planner 的输入清单）
@@ -216,13 +223,16 @@ jobs:
           LOOP_REPO: ${{ github.event.repository.name }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
+          # fake-green-ok: 下方以 EXIT=$? / exit $EXIT 显式传播退出码，set +e 只为拿到 $?
           set +e
           python -c "
           import sys; sys.path.insert(0, '.')
           from conductor import tick as T
           T.plan_inbox_pack()
           "
-          echo "exit=$?"
+          EXIT=$?
+          echo "exit=$EXIT"
+          exit $EXIT
 
       # ============================================================
       # Step 5: 48h silent auto release（波次 PR trivial 子集 dispatch）
@@ -235,6 +245,7 @@ jobs:
           LOOP_REPO: ${{ github.event.repository.name }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
+          # fake-green-ok: 下方以 EXIT=$? / exit $EXIT 显式传播退出码，set +e 只为拿到 $?
           set +e
           python -c "
           import sys; sys.path.insert(0, '.')
@@ -242,7 +253,9 @@ jobs:
           T.silent_auto_release()
           T.race_mode_handler()
           "
-          echo "exit=$?"
+          EXIT=$?
+          echo "exit=$EXIT"
+          exit $EXIT
 
       - name: Upload audit artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0

@@ -7,6 +7,7 @@ on:
     - cron: "23 6 * * 5"
   workflow_dispatch:
 permissions: {contents: read, issues: write, actions: write}
+concurrency: {group: nightly-rubric, cancel-in-progress: false}
 jobs:
   # ============================================================
   # 夜检：LLM rubric（promptfoo，非阻塞；失败只开 Finding，不卡波次）
@@ -18,24 +19,25 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Setup Python
-        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: {python-version: "3.11"}
       - name: Install promptfoo + deps
         run: |
           set -e
           python -m pip install --upgrade pip PyYAML --quiet
-          npm install -g promptfoo 2>/dev/null || true
+          npm install -g promptfoo
       - name: Run promptfoo llm-rubric
         env:
           LLM_GATEWAY_KEY: ${{ secrets.LLM_GATEWAY_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
-          # TODO: promptfoo eval -c promptfoo/promptfooconfig.yaml --filter-metadata rubric=true
-          # 回归只开 Finding，不阻塞
-          echo "nightly-rubric: TODO — promptfoo config not yet scaffolded (W2)"
-          EXIT=0
-          exit $EXIT
+          set -e
+          if [ ! -f promptfoo/promptfooconfig.yaml ]; then
+            echo "::error::promptfoo config not scaffolded — see WAVE card"
+            echo "promptfoo config not scaffolded — see WAVE card" >&2
+            exit 1
+          fi
+          promptfoo eval -c promptfoo/promptfooconfig.yaml --filter-metadata rubric=true
       - name: On failure → open Finding issue
         if: ${{ failure() }}
         env:
@@ -45,7 +47,8 @@ jobs:
             -R ${{ github.repository }} \
             --title "Rubric nightly failed: $(date -u +%F)" \
             --label finding --label rubric-nightly \
-            --body "LLM rubric nightly failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" || true
+            --body "LLM rubric nightly failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            || echo "::warning::创建 Finding issue 失败"
 
   # ============================================================
   # 每周五 Retro：OPC-v4 P6 五问零 LLM 汇总 + plan-ops LLM 归因
@@ -59,7 +62,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: {fetch-depth: 200}  # 需要足够历史查 last_audited_sha diff
       - name: Setup Python
-        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with: {python-version: "3.11"}
       - name: Install deps
         run: python -m pip install PyYAML --quiet
@@ -89,6 +92,7 @@ jobs:
         run: |
           # 以后 plan-ops sandbox 真实接口就绪后，把 body payload 替换成 HTTP POST
           # 目前仅打一个空事件（不阻塞）
+          # fake-green-ok: plan-ops 归因通道是非阻塞的旁路事件，失败不应让 retro 作业红
           set +e
           WEEK=$(date -u +%GW%V)
           gh api repos/${{ github.repository }}/dispatches \

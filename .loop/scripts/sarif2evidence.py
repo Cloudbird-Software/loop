@@ -26,7 +26,7 @@ def main():
     envelope = {
         "lens": lens,
         "shard": "S1",
-        "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z",
         "tool": {"name": "sarif-converter", "version": "0.1", "sha256": "TODO"},
         "scope": {"base_sha": "TODO", "head_sha": "TODO", "files": 0},
         "findings": findings

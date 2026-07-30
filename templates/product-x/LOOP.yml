@@ -1,0 +1,75 @@
+# LOOP.yml — 产品仓对 loop 控制面的 pin（模板）
+#
+# 这个文件是"产品仓 ↔ loop 仓"之间的唯一契约面。它对 loop 的作用，
+# 等同于 UPSTREAM.yaml 对外部依赖的作用：把一个会变的东西钉死在一个可审计的版本上。
+#
+# 铁律（CHARTER N9）：
+#   产品仓**不允许**存放 loop 机制文件的副本（gates/ lenses/ conductor/ loopd/ prompts/ settings/）。
+#   产品仓只允许：
+#     1. 本文件（声明 pin 与开关）
+#     2. .github/workflows/loop-*.yml —— 里面只有 `uses: Cloudbird-Software/loop/...@<sha>`，零逻辑
+#   任何在产品仓里发现的机制副本 → gate/loop-conformance 直接红。
+#
+# 升级路径（复用第 8 环，不新造机制）：
+#   产品仓的 UPSTREAM.yaml 里登记一条 `Cloudbird-Software/loop`（seam: control-plane）。
+#   loop 发新 tag → 冷静期 min_age_days 后 → upgrade 环自动开"bump loop_version"PR
+#   → 跑 bench 重放 → 四指标不劣化才允许合并。
+#   于是"每个产品仓都在用最新实践"是一个可观测、可回退的自动流程，而不是靠人记得同步。
+
+schema: 1
+
+# ── 产品身份 ──────────────────────────────────────────────
+product:
+  name: product-x                     # ← 复制后改这里
+  charter: CHARTER.md                 # 相对本文件的路径；gate/charter-hash 读它
+  is_template: true                   # ← 真实产品仓改为 false
+
+# ── 控制面 pin ────────────────────────────────────────────
+loop:
+  repo: Cloudbird-Software/loop
+  # 必须同时写 tag 与完整 40 位 SHA。只写 tag 不接受（tag 可被移动）。
+  version: "v0.1.5"
+  sha: "0000000000000000000000000000000000000000"   # ← 由 upgrade 环回填，禁止手填 latest/main
+  # 落后窗口：超出即 gate/loop-conformance 由 warn 升为红（CHARTER Q6）
+  max_lag_tags: 2
+  max_lag_days: 30
+
+# ── 引用的 reusable workflow（产品仓侧只留薄壳）─────────────
+# 产品仓 .github/workflows/loop-ci.yml 内容应当只有：
+#   jobs: {ci: {uses: Cloudbird-Software/loop/.github/workflows/reusable-product-ci.yml@<sha>, secrets: inherit}}
+reusable:
+  ci: .github/workflows/reusable-product-ci.yml
+  gates: .github/workflows/reusable-gates.yml
+  review: .github/workflows/reusable-review.yml
+
+# ── 本产品启用的 lens 集合（子集，由 loop 提供实现）──────────
+lenses:
+  enabled:
+    - ci-security
+    - secret-leak
+    - deps-risk
+    - contract-drift
+    - doc-as-test
+    - error-path
+  # 不在 enabled 里的 lens 不跑；新增 lens 必须由 loop 侧先实现再在此启用。
+
+# ── 门禁档位 ──────────────────────────────────────────────
+gates:
+  profile: strict          # strict | standard —— 决定哪些 gate 是 required check
+  # required check 的**名字**由 loop 侧 reusable workflow 的 job 名决定，
+  # 产品仓不得自行改名（改名 = ruleset 与 job 名脱钩 = 门禁静默失效）。
+  # 若需增删 required check，改本文件 profile，由 loop 侧统一映射。
+
+# ── 接缝 A 路由覆盖（可选）──────────────────────────────────
+routing_overrides: {}
+  # 例：把本产品的 impl/standard 换成另一个模型池
+  # - {domain: impl, action: "*", tier: standard, provider: qwen, model: qwen3-max}
+
+# ── 本产品需要的 secrets / variables（gate/loop-conformance 只检测存在性，
+#     缺失时开 Incident，**绝不自动创建**，见 CHARTER N3）──────
+requires:
+  secrets: []                # 产品仓自身不应持有高权限凭证；跨仓动作由 loop 侧 App token 完成
+  variables:
+    - LOOP_PRODUCT
+    - LOOP_HUMAN
+  environments: []

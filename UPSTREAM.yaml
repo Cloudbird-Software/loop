@@ -32,8 +32,29 @@ items:
     kind: binary
     pin: "v1.18.4"
     sha256: "bab463c3fb3224d388bb7cfad63f38703df9cf0be2cfd2ce8cb49d886b53a174"
+    license: MIT
     degrade_path: "单卡执行器退回 loopd 内置 P0+编辑器循环；异构验证改用 Codex CLI"
     note: "A 包登记，E 包全量整理时合并；只当单卡执行器，绝不跨卡调度。仓库名 sst/opencode（GitHub 重定向到 anomalyco/opencode，API 兼容）；sha256 对应资源 opencode-linux-x64.tar.gz"
+
+  # ── B 执行体：强模型验收环的执行体（见 docs/强模型验收环.md、DECISIONS.md ADR-004） ──
+  - name: "@github/copilot"
+    seam: B
+    kind: cli
+    pin: "1.0.43"
+    install: "npm install -g @github/copilot@1.0.43"
+    official_source_only: true
+    license: "GitHub-Copilot-CLI-Terms"   # 专有许可，不在 policy.license.allow 白名单内，
+                                          # 按例外登记：仅作 CI 内的一次性执行体，不链接进任何产物。
+    degrade_path: "退回 opencode 或 Codex CLI headless + 接缝 A 路由出的 strongest 模型；claim schema 不变，下游复现/记分链路零改动"
+    note: |
+      非交互用法：copilot -p "<prompt>" --no-tty --allow-tool=... --deny-tool=...；
+      鉴权走 COPILOT_GITHUB_TOKEN / GITHUB_TOKEN 环境变量；亦有官方 github/copilot-cli Action。
+      ★安全下限（GitHub Advisory DB 实查）：
+        - GHSA «Nested Bare Repository ... core.fsmonitor 任意命令执行»：影响 <= 1.0.42，修复于 1.0.43
+        - GHSA «Dangerous Shell Expansion Patterns 任意代码执行»：影响 <= 0.0.422，修复于 0.0.423
+      因此 pin 下限恒为 1.0.43，任何低于此版本的 pin 一律拒绝（gate/min-age 之外的硬下限）。
+      ★权限下限：评审角色只给 issues:write，绝不给 contents:write；
+        CLI 侧用 --deny-tool 禁掉写文件与推分支（角色阀门，见 CHARTER N6/N10）。
 
   # ── gate 门禁工具（OPC-v4 §1.1） ──
   - name: zizmorcore/zizmor

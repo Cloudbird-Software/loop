@@ -20,3 +20,17 @@ upstream:
   min_age_days: 7
   trigger: on_wave_open          # ★不按周
   auto_tier: {seam_a: trivial, seam_d: trivial, seam_b: standard, checkers_or_workflows: critical}
+license:
+  allow: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0, Unlicense, CC0-1.0, PSF-2.0, Python-2.0]
+review:
+  # 强模型验收环（见 docs/强模型验收环.md）。本段是该环唯一的方向盘。
+  enabled: true
+  tiers: [standard, critical]    # trivial 卡不跑强模型验收（成本控制）
+  max_reviews_per_day: 6         # Copilot CLI 在 Actions 里跑消耗 premium request
+  min_confidence: 0.6            # 低于此值的 claim 由校验器直接丢弃
+  required_check: false          # ★永不做 required check：模型不确定性不能卡合并线
+  reproduce_required: true       # ★未被 REPRODUCED 的 claim 不得触发任何代码改动（CHARTER N7）
+  heterogeneity_required: true   # 复现模型必须 != 提出 claim 的模型（CHARTER N6）
+  arbitration_samples: 3         # 复现结果冲突时凑够几个样本才交 planner 仲裁
+  harden_after_confirms: 2       # 同一 suggested_checker 被确认 N 次 → 强制转「写检查器」卡
+  precision_floor: 0.5           # reviewer_model 的 claim 精度低于此值 → 自动降权/改路由
