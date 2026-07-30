@@ -1,23 +1,44 @@
 name: upgrade
+# 第 8 环升级环（手册 v5 第 6 部分；OPC-v4 P7）。
+# 触发（v5 定形态：on_wave_open；卡片任务补：每周日 05:00。两者都支持）：
+#   - schedule 周日 05:00 UTC（卡片任务要求）
+#   - repository_dispatch wave-opened（v5 主触发，波次开启时由 materializer dispatch）
+#   - workflow_dispatch（人工/调试）
+# 权限：只读 contents + issues/PR 写（劣化时开 Incident / 关升级卡）。
 on:
+  schedule:
+    - cron: "0 5 * * 0"           # 每周日 05:00 UTC
   repository_dispatch:
     types: [wave-opened]
   workflow_dispatch:
 permissions: {contents: read, issues: write, pull-requests: write}
+concurrency: {group: upgrade-ring, cancel-in-progress: false}
 jobs:
   upgrade-ring:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Checkout bench repo (holdout replay pack)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository_owner }}/bench
+          path: bench
       - id: t
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
-        with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
-      - name: Read UPSTREAM.yaml and check cooldown
+        with:
+          app-id: "${{ secrets.CONDUCTOR_APP_ID }}"
+          private-key: "${{ secrets.CONDUCTOR_APP_KEY }}"
+          owner: "${{ github.repository_owner }}"
+      - name: Install deps
+        run: pip install --require-hashes -r requirements.txt
+      - name: Run upgrade ring
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_ORG: ${{ github.repository_owner }}
           LOOP_PRODUCT: product-x
         run: |
           set -e
-          echo "Wave opened — checking upstream dependencies..."
+          echo "=== upgrade ring triggered by: ${{ github.event_name }} ==="
+          # 生成 bench 基线（幂等；bench/baseline.json 已存在则跳过）
+          python3 bench/metrics.py baseline --replay-dir bench/replay --out bench/baseline.json
           python3 conductor/upgrade_ring.py

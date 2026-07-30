@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-005",
+  "source": {"repo": "product-x", "card_number": 22, "card_id": "C-2026W31-005", "merged_sha": "e5f6a7b"},
+  "card_description": "Add structured logging adapter in src/log/ with a unit test for redaction.",
+  "tier": "trivial",
+  "paths": ["src/log/**", "tests/unit/log/**"],
+  "acceptance": ["AC1: secret fields redacted in output", "AC2: adapter preserves severity"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/log/test_adapter.py::test_redacts_secret", "must_pass": true},
+    {"kind": "gate", "ref": "gate/test", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "e5f6a7b", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 44, "cost_yuan": 0.0}
+}

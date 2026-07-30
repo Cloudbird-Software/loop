@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-009",
+  "source": {"repo": "product-x", "card_number": null, "card_id": "SYN-009", "merged_sha": null},
+  "card_description": "[synthetic] Add rate-limiter token bucket in src/ratelimit/ + unit test for refill.",
+  "tier": "trivial",
+  "paths": ["src/ratelimit/**", "tests/unit/ratelimit/**"],
+  "acceptance": ["AC1: bucket refills over time", "AC2: over-limit requests denied"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/ratelimit/test_token_bucket.py::test_over_limit_denied", "must_pass": true},
+    {"kind": "gate", "ref": "gate/test", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "synthetic", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 49, "cost_yuan": 0.0}
+}

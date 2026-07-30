@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-008",
+  "source": {"repo": "product-x", "card_number": null, "card_id": "SYN-008", "merged_sha": null},
+  "card_description": "[synthetic] Add idempotency-key deduper to src/jobs/ + unit test for replay safety.",
+  "tier": "trivial",
+  "paths": ["src/jobs/**", "tests/unit/jobs/**"],
+  "acceptance": ["AC1: duplicate key is a no-op", "AC2: first-seen key runs once"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/jobs/test_idempotency.py::test_duplicate_noop", "must_pass": true},
+    {"kind": "gate", "ref": "gate/test", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "synthetic", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 67, "cost_yuan": 0.0}
+}

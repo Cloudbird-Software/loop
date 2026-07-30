@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "R-001",
+  "source": {"repo": "product-x", "card_number": 18, "card_id": "C-2026W31-001", "merged_sha": "a1b2c3d"},
+  "card_description": "Add unified error envelope to src/errors/ and a unit test for the basic shape.",
+  "tier": "trivial",
+  "paths": ["src/errors/**", "tests/unit/errors/**"],
+  "acceptance": ["AC1: ErrorEnvelope has code/message/fields", "AC2: unit test covers basic shape"],
+  "expected_evidence": [
+    {"kind": "test", "ref": "tests/unit/errors/test_envelope.py::test_basic_shape", "must_pass": true},
+    {"kind": "gate", "ref": "gate/build", "must_pass": true}
+  ],
+  "env_pin": {"loop_repo_sha": "61fe022", "product_x_sha": "a1b2c3d", "upstream_pins": {"PyYAML": "6.0.3"}},
+  "baseline_metrics": {"first_ci_pass": true, "reopen_count": 0, "diff_lines": 38, "cost_yuan": 0.0}
+}

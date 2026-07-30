@@ -1,13 +1,108 @@
+# UPSTREAM.yaml — 所有外部依赖登记处（OPC-v4 P9 格式；E 包全量整理）。
+#
+# 铁律：
+# - 未登记进本文件的外部依赖 → gate/upstream-registered 直接红。
+# - 新版本必须过 policy.min_age_days 冷静期才允许自动升级。
+# - 永不从非官方源安装（spec-kit 只能从其 GitHub 仓库，不能从 PyPI 同名包）。
+# - 所有二进制的 sha256 由 W0 的 `loop upstream` 现场填（此处先占位 w0-fill）。
+#
+# 字段（每项必填）：name / seam / kind / pin / degrade_path
+#   kind=binary  → 必填 sha256
+#   kind=cli     → 必填 official_source_only（spec-kit 恒为 true）
+# seam 取值：A 模型 / B 执行体 / C 技能 / D 工具 / gate 门禁 / 巡检
+
 policy:
   min_age_days: 7
-# A 包只追加 opencode 条目（接口契约 0.6）；E 包负责全量整理（含字段名 packages→items 统一、
-# 其余依赖补登记）。字段格式照 OPC-v4 P9。
+  trigger: on_wave_open          # 手册 v5：不按周，波次开启时由 materializer dispatch
+  auto_tier: {seam_a: trivial, seam_d: trivial, seam_b: standard, checkers_or_workflows: critical}
+
 items:
+  # ── C 技能/意图（spec-kit，OPC-v4 §1.1） ──
+  - name: github/spec-kit
+    seam: C
+    kind: cli
+    pin: "v0.0.0@w0-fill"
+    install: "uvx --from git+https://github.com/github/spec-kit.git@<tag>"
+    official_source_only: true       # 禁止从 PyPI 同名包安装
+    degrade_path: "波次改用 waves/*.md 纯手写模板，analyze/checklist 降级为人工读"
+
+  # ── B 执行体（A 包追加的 opencode 条目；E 包合并 + 回填真实 pin/sha256） ──
   - name: sst/opencode
-    seam: B                      # 接缝 B 执行体，异构验证工（OPC-v4 §1.1）
+    seam: B
     kind: binary
-    pin: "v0.0.0"                # pin：E 包填真实 release tag（与 bootstrap.sh OPENCODE_VERSION 对齐）
-    sha256: "PLACEHOLDER_FILL_BY_UPSTREAM"  # 校验占位，E 包填；bootstrap.sh 据此启用硬校验
-    install: "python3 -c \"import urllib.request; urllib.request.urlretrieve('https://github.com/sst/opencode/releases/download/<tag>/opencode-linux-amd64','/tmp/opencode')\""
-    official_source_only: true   # 只从 sst/opencode 官方 GitHub releases 下载，不从 npm 同名包/第三方源装
-    degrade_path: "verify 沙盒改用 Trae 内置 agent + 便宜异构模型（LOOP_MODEL 仍由派单层强制 != impl.model）；opencode 不可用时异构保证降级为'同模型自验证'并开 Finding 告警"
+    pin: "v1.18.4"
+    sha256: "bab463c3fb3224d388bb7cfad63f38703df9cf0be2cfd2ce8cb49d886b53a174"
+    degrade_path: "单卡执行器退回 loopd 内置 P0+编辑器循环；异构验证改用 Codex CLI"
+    note: "A 包登记，E 包全量整理时合并；只当单卡执行器，绝不跨卡调度。仓库名 sst/opencode（GitHub 重定向到 anomalyco/opencode，API 兼容）；sha256 对应资源 opencode-linux-x64.tar.gz"
+
+  # ── gate 门禁工具（OPC-v4 §1.1） ──
+  - name: zizmorcore/zizmor
+    seam: gate
+    kind: binary
+    pin: "1.0.0"
+    sha256: "w0-fill"
+    degrade_path: "workflow 变更强制 critical + 人工审 zizmor 输出"
+
+  - name: suzuki-shunsuke/pinact
+    seam: gate
+    kind: binary
+    pin: "0.1.0"
+    sha256: "w0-fill"
+    degrade_path: "改用 ensure-sha-pinned-actions + 人工逐条钉 SHA"
+
+  - name: gitleaks/gitleaks
+    seam: gate
+    kind: binary
+    pin: "8.16.0"
+    sha256: "w0-fill"
+    degrade_path: "PR 关键路径退回 trufflehog --only-verified，密度下降但可阻断"
+
+  - name: google/osv-scanner
+    seam: gate
+    kind: binary
+    pin: "1.4.0"
+    sha256: "w0-fill"
+    degrade_path: "deps-cve gate 降级为每日 Grype 单扫，不再双源交叉"
+
+  - name: anchore/syft
+    seam: gate
+    kind: binary
+    pin: "0.100.0"
+    sha256: "w0-fill"
+    degrade_path: "SBOM 用 osv-scanner 自带清单，丢失包级元数据"
+
+  - name: anchore/grype
+    seam: gate
+    kind: binary
+    pin: "0.70.0"
+    sha256: "w0-fill"
+    degrade_path: "漏洞匹配退回 osv-scanner 单源，无 EPSS/KEV 复合评分"
+
+  - name: trufflesecurity/trufflehog
+    seam: gate
+    kind: binary
+    pin: "3.70.0"
+    sha256: "w0-fill"
+    degrade_path: "全历史密钥扫描降频到每月一次；PR 阻塞仍靠 gitleaks"
+
+  # ── B 执行体配套（bootstrap 装的 CLI，loopd 依赖） ──
+  - name: cli/cli
+    seam: B
+    kind: binary
+    pin: "2.40.0"
+    sha256: "w0-fill"
+    degrade_path: "gh CLI 不可用时 loopd 退回 git+REST API，CAS 写入降级"
+
+  - name: jdx/mise
+    seam: B
+    kind: binary
+    pin: "2024.10.0"
+    sha256: "w0-fill"
+    degrade_path: "loop verify 退回系统默认工具版本，沙盒绿/CI 红风险上升"
+
+  - name: jqlang/jq
+    seam: B
+    kind: binary
+    pin: "1.7.1"
+    sha256: "w0-fill"
+    degrade_path: "JSON 处理改用 python -c，性能下降但功能等价"
