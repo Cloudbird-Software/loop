@@ -209,7 +209,7 @@ def unblock_deps():
             p = gh("issue","view",str(dep),"-R",REPO,"--json","state")
             try:
                 st = json.loads(p.stdout or "{}").get("state","")
-                if st != "closed":
+                if st.lower() != "closed":
                     all_merged = False; break
             except Exception:
                 all_merged = False; break

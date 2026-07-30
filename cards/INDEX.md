@@ -23,6 +23,7 @@
 | [C-013](./C-013.md) | 扩到 2-3 沙盒验并发（CAS+租约+reaper） | standard | [C-001, C-005, C-008] | **true** | pending | P2 |
 | [C-014](./C-014.md) | 修复 F-001：/health 改用 stdlib（零外部依赖） | standard | [F-001] | true | **done** | P1 |
 | [C-015](./C-015.md) | 修复 F-002：product-x ci.yml 加 merge_group 触发器 | critical | [F-002] | true | **done** | P1 |
+| [C-016](./C-016.md) | 修复 F-003：tick.py:212 大小写比较 bug | critical | [F-003] | true | **done** | P1 |
 
 ### 验证卡 V-0NN
 
@@ -48,6 +49,7 @@
 |---|---|---|---|---|---|
 | [F-001](./F-001.md) | W2-002 / C-008 / V-008 | 1 | 1 | 0 | done |
 | [F-002](./F-002.md) | C-009 / C-014 / V-008 | 1 | 1 | 0 | **done** |
+| [F-003](./F-003.md) | C-006 / V-006 | 1 | 1 | 0 | done |
 
 ## 依赖图（mermaid）
 
