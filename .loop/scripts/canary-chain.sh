@@ -109,9 +109,9 @@ log "  -> checks completed (ok=$CHECKS_OK) after ${i} polls"
 # 入队（不因 gh 错误而中断 set -e）
 ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1) || true
 log "  -> enqueue result: $ENQ"
-# 等待合并生效（merge queue 处理 + 状态检查），最多轮询 150 秒
+# 等待合并生效（merge queue 处理 + 状态检查），最多轮询 420 秒（7min，覆盖 min_entries_to_merge_wait_minutes=5）
 MERGED_OK=0
-for i in $(seq 1 50); do
+for i in $(seq 1 140); do
   PR_STATE=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json state --jq '.state' 2>/dev/null || echo "")
   if [ "$PR_STATE" = "MERGED" ]; then
     MERGED_OK=1
@@ -120,7 +120,7 @@ for i in $(seq 1 50); do
   sleep 3
 done
 if [ "$MERGED_OK" -ne 1 ]; then
-  log "  -> GATE FAIL: PR #$PR_NUM not merged within 150s (last state=$PR_STATE)"
+  log "  -> GATE FAIL: PR #$PR_NUM not merged within 420s (last state=$PR_STATE)"
   echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (merge timeout)" >&2
   exit 1
 fi
