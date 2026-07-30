@@ -98,7 +98,8 @@ jobs:
           git push origin HEAD
           # 第二远端（镜像，可选）：从变量读地址，不硬编码
           if [ -n "$JOURNAL_MIRROR_URL" ]; then
-            git remote add mirror "$JOURNAL_MIRROR_URL" 2>/dev/null || git remote set-url mirror "$JOURNAL_MIRROR_URL"
+            MIRROR_URL="${JOURNAL_MIRROR_URL/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}"
+            git remote add mirror "$MIRROR_URL" 2>/dev/null || git remote set-url mirror "$MIRROR_URL"
             git push mirror HEAD
             echo "pushed to second remote (mirror)"
           else
