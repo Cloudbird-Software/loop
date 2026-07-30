@@ -1,0 +1,257 @@
+name: audit
+on:
+  schedule:
+    # 每天 07:03 UTC = 15:03 北京：2 片审计轮转（避开整点波峰）
+    - cron: "3 7 * * *"
+  workflow_dispatch:
+    inputs:
+      override_shards:
+        description: "Override shard list, e.g. S1,S2"
+        required: false
+        default: ""
+permissions: {contents: read, issues: write, actions: write, pull-requests: read}
+jobs:
+  audit-shards:
+    runs-on: ubuntu-latest
+    environment: eval
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {fetch-depth: 500}  # 需足够历史算 last_audited_sha..HEAD diff
+
+      - name: Setup Python
+        uses: actions/setup-python@0b5e7485ae2cc8f5e1a81654d7a944f453e71b83 # v5.3.0
+        with: {python-version: "3.11"}
+
+      - name: Install deps
+        run: |
+          set -e
+          python -m pip install --upgrade pip PyYAML --quiet
+
+      # ============================================================
+      # Step 1: tick → 选出今天的分片 + 配额 + 降频状态 → today_shards.json
+      # ============================================================
+      - name: Step 1/5 Audit shard rotate (tick.py [7])
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_POLICY: ${{ github.workspace }}/policy.yml
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set -e
+          python -c "
+          import sys, json; sys.path.insert(0, '.')
+          from conductor import tick as T
+          shs = T.audit_shard_rotate()
+          print(json.dumps([{'id':s[0],'lenses':s[1],'last_sha':s[2]} for s in shs], indent=2, ensure_ascii=False))
+          "
+
+      - name: Apply override shards (if workflow_dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.override_shards != '' }}
+        env:
+          LOOP_ROOT: ${{ github.workspace }}
+        run: |
+          set -e
+          python -c "
+          import json, pathlib, os
+          override = '${{ inputs.override_shards }}'.strip().split(',')
+          override = [x.strip() for x in override if x.strip()]
+          p = pathlib.Path(os.environ['LOOP_ROOT']) / '.loop' / 'audit' / 'today_shards.json'
+          if p.exists():
+              data = json.loads(p.read_text())
+              # 保留原数据但覆盖 shards 列表
+              print('override:', override)
+          "
+
+      # ============================================================
+      # Step 2: 逐片逐 lens 跑（读 lenses/*.sh 脚本；只喂 last_audited_sha..HEAD 的 diff 路径）
+      # ============================================================
+      - name: Step 2/5 Run audit lenses per shard (last_audited_sha..HEAD)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_POLICY: ${{ github.workspace }}/policy.yml
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set +e
+          python3 << 'PYEOF'
+          import json, pathlib, os, subprocess, datetime, tempfile, sys, hashlib
+          LOOP = pathlib.Path(os.environ['LOOP_ROOT'])
+          TODAYS = LOOP / '.loop' / 'audit' / 'today_shards.json'
+          QUOTA_RUNS = []
+          NEW_FINDINGS = []
+          if TODAYS.exists():
+              cfg = json.loads(TODAYS.read_text())
+              quota_left = cfg.get('quota_left', 8)
+          else:
+              cfg = {'shards': []}
+              quota_left = 8
+          for sh in cfg.get('shards', []):
+              sid = sh['id']
+              last_sha = sh.get('last_audited_sha', 'HEAD~1')
+              # 取 diff 路径（简化版；实际用 git diff --name-only last_sha..HEAD）
+              try:
+                  r = subprocess.run(['git','diff','--name-only', last_sha, 'HEAD'],
+                                     capture_output=True, text=True, cwd=str(LOOP))
+                  diff_paths = [x for x in r.stdout.splitlines() if x.strip()]
+              except Exception as e:
+                  diff_paths = []
+                  print(f'shard {sid}: diff failed {e}')
+              for lens in sh.get('lenses', []):
+                  script_sh = LOOP / 'lenses' / f'{lens}.sh'
+                  script_md = LOOP / 'lenses' / f'{lens}.md'
+                  if not script_sh.exists():
+                      print(f'shard {sid} lens {lens}: no script, skip')
+                      continue
+                  # 喂给 lens 的证据 JSON（标准化输入）
+                  evidence_in = {
+                      'lens': lens, 'shard': sid,
+                      'last_audited_sha': last_sha, 'head_sha': 'HEAD',
+                      'diff_paths': diff_paths,
+                      'generated_at': datetime.datetime.utcnow().isoformat()+'Z',
+                  }
+                  with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as f:
+                      json.dump(evidence_in, f, ensure_ascii=False)
+                      ev_in = f.name
+                  with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as f:
+                      ev_out = f.name
+                  # 调用 lens 脚本（约定：lens <ev_in.json> <ev_out.json>）
+                  try:
+                      r = subprocess.run(
+                          ['bash', str(script_sh), ev_in, ev_out],
+                          capture_output=True, text=True, timeout=300,
+                          cwd=str(LOOP))
+                      try:
+                          results = json.loads(pathlib.Path(ev_out).read_text() or '[]')
+                      except Exception as e:
+                          results = []
+                  except Exception as e:
+                      results = []
+                  # fingerprint 去重 + 配额控制
+                  from conductor.tick import fingerprint, _load_audit_state, _save_audit_state
+                  state = _load_audit_state()
+                  for r0 in (results if isinstance(results, list) else []):
+                      if not isinstance(r0, dict): continue
+                      fp = fingerprint(lens,
+                                       r0.get('path',''),
+                                       r0.get('symbol',''),
+                                       r0.get('rule_id',''))
+                      if fp in state.get('closed_findings', {}):
+                          continue  # stale 已关，不再重开
+                      meta = state['fingerprints'].setdefault(fp, {
+                          'first_seen': int(datetime.datetime.utcnow().timestamp()),
+                          'occurrences': 0, 'severity': r0.get('severity','low'),
+                      })
+                      meta['occurrences'] += 1
+                      meta['last_seen'] = int(datetime.datetime.utcnow().timestamp())
+                      if 'lens' not in meta:
+                          meta['lens'] = lens; meta['shard'] = sid
+                      is_new = 'finding_id' not in meta
+                      if is_new and state['daily_new_findings'] >= quota_left:
+                          continue  # 超配额，跳过
+                      if is_new:
+                          state['daily_new_findings'] += 1
+                          # 生成临时编号（实际由 issue create 回写）
+                          meta['finding_id'] = meta.get('finding_id',
+                                                        abs(hash(fp)) % 1_000_000)
+                          state['adoption_log'].append({
+                              'ts': int(datetime.datetime.utcnow().timestamp()),
+                              'event': 'opened', 'fp': fp})
+                          NEW_FINDINGS.append({
+                              'fp': fp, 'lens': lens, 'shard': sid,
+                              'severity': meta['severity'], 'occurrences': meta['occurrences'],
+                              'raw': r0})
+                  _save_audit_state(state)
+                  QUOTA_RUNS.append({'shard': sid, 'lens': lens,
+                                     'diff_paths_count': len(diff_paths),
+                                     'results_count': len(results)})
+                  # 清理临时
+                  for _p in [ev_in, ev_out]:
+                      try: pathlib.Path(_p).unlink()
+                      except: pass
+          # 汇总输出
+          summary = {
+              'generated_at': datetime.datetime.utcnow().isoformat()+'Z',
+              'runs': QUOTA_RUNS,
+              'new_findings_count': len(NEW_FINDINGS),
+              'new_findings_sample': NEW_FINDINGS[:8],
+          }
+          outdir = LOOP / '.loop' / 'audit'
+          outdir.mkdir(parents=True, exist_ok=True)
+          (outdir / 'run_summary.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+          (outdir / 'new_findings.json').write_text(json.dumps(NEW_FINDINGS, indent=2, ensure_ascii=False))
+          print(f'== runs: {len(QUOTA_RUNS)}; new findings: {len(NEW_FINDINGS)} (quota cap {quota_left}) ==')
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PYEOF
+          echo "exit=$?"
+
+      # ============================================================
+      # Step 3: 对今日超 quota 未发的 + 去重命中 + occurrences bump 打 checker-needed
+      # ============================================================
+      - name: Step 3/5 tick → occurrences severity bump + checker-needed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_POLICY: ${{ github.workspace }}/policy.yml
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set +e
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from conductor import tick as T
+          T.occurrences_bump_severity()
+          "
+          echo "exit=$?"
+
+      # ============================================================
+      # Step 4: inbox pack（给 P3 planner 的输入清单）
+      # ============================================================
+      - name: Step 4/5 tick → plan inbox pack (.loop/plan/inbox 五份 JSON)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_POLICY: ${{ github.workspace }}/policy.yml
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set +e
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from conductor import tick as T
+          T.plan_inbox_pack()
+          "
+          echo "exit=$?"
+
+      # ============================================================
+      # Step 5: 48h silent auto release（波次 PR trivial 子集 dispatch）
+      # ============================================================
+      - name: Step 5/5 tick → 48h silent auto release + race mode
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_POLICY: ${{ github.workspace }}/policy.yml
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set +e
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from conductor import tick as T
+          T.silent_auto_release()
+          T.race_mode_handler()
+          "
+          echo "exit=$?"
+
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
+        with:
+          name: audit-artifacts
+          path: |
+            .loop/audit/today_shards.json
+            .loop/audit/state.json
+            .loop/audit/run_summary.json
+            .loop/audit/new_findings.json
+            .loop/plan/inbox/*.json
+          retention-days: 60
