@@ -1,6 +1,6 @@
 # loopd SPEC.md — 权威行为规格
 
-> 覆盖：动词语义表、CAS 领卡协议、租约与心跳、僵尸回收约定、双 IO 模式、RETIRE 规则、错误码表。
+> 覆盖：动词语义表、CAS 领卡协议、租约与心跳、僵尸回收约定、命令传输层、RETIRE 规则、错误码表。
 
 ---
 
@@ -20,7 +20,6 @@
 | `propose <file>` | 提波次 | 开波次 PR（只允许改 `waves/**`） | `h_propose` |
 | `verdict <file>` | 交裁决 | 校验 head_sha 绑定后贴 VERDICT | `h_verdict` |
 | `upstream <pkg>` | 登记依赖 | 查发布日期 → 过冷静期才返回 OK | `h_upstream` |
-| `run <intent>` | 白名单意图兜底 | 见 intents.yaml | `h_run` |
 | `retire` | 结束会话 | 归档上下文 + 通知点击器重开 | `h_retire` |
 | `status` | 自检 | daemon/token/租约/确认计数 | `h_status` |
 | `help` | 打印动词表 | 原样输出动词表 | `h_help` |
@@ -64,17 +63,15 @@ CAS 字段：`claim_id` = `{SID}-{uuid8}`，写入 card block 的 `claim_id` 字
 
 ---
 
-## 5. 双 IO 模式
+## 5. 命令传输层（#52/#53 已移除远程通道）
 
-### 5.1 Shim 模式（默认，`LOOP_IO_MODE=shim`）
-
-agent 执行 `loop <verb> [args]` → shim 写请求到 `relay/inbox/{id}.json` → 轮询 `relay/outbox/{id}.json` → 打印 stdout/stderr → 退出。
-
-### 5.2 File 模式（`LOOP_IO_MODE=file`）
-
-agent 用编辑器写 `.loop/IN.json`（内容 `{"intent":"<verb>","args":[...]}`）→ loopd `filemode_thread` 检测 mtime 变化 → 投递到 relay inbox → 执行 → 覆盖写 `.loop/OUT.md`（首行 `status: done` 或 `status: pending`）→ IN.json 重命名到 `relay/done/`。
-
-agent 反复打开 OUT.md：首行 `status: pending` 就再打开一次，直到 `status: done`。
+> **历史**：原设计有两条未鉴权的远程命令通道——
+> - **Shim 模式**（`LOOP_IO_MODE=shim`）：`loop` shim 把请求写到 `.loop/relay/inbox/{id}.json`，轮询 `.loop/relay/outbox/{id}.json`。
+> - **File 模式**（`LOOP_IO_MODE=file`）：agent 写 `.loop/IN.json`，`filemode_thread` 检测 mtime 后投递到 relay inbox，结果覆盖写 `.loop/OUT.md`。
+>
+> 两者都允许任何能写 `.loop/relay/` 或 `.loop/IN.json` 的进程执行白名单命令（含 `run <intent>` 的 shell 兜底），是不鉴权的命令执行面。#52/#53 已删除 `relay_thread` / `filemode_thread` / `load_intents` / `h_run` / `loop` shim / `intents.yaml`，并停止创建 `.loop/relay/` 目录。
+>
+> **现状**：loopd 仅作为守护进程运行（`main()` 启动心跳 / 自动落盘 / 僵尸回收线程），状态持久化在 `.loop/daemon.json`。暂行期 agent 不经 loopd CLI 取卡，直接用 gh/git 按 `cards/WORKFLOW.md` 推进；正式 loopd 体系的命令传输层待后续以鉴权方案重建（见 `docs/issue去留裁决-2026-07-30.md` #52）。往 `.loop/IN.json` 或 `.loop/relay/inbox/` 丢 JSON 不会被消费（见 `tests/test_loopd_no_remote_intents.py`）。
 
 ---
 
@@ -96,9 +93,9 @@ agent 反复打开 OUT.md：首行 `status: pending` 就再打开一次，直到
 | `1` | 业务失败 | verify 失败、no active card、not found 等 |
 | `64` | UNKNOWN_VERB / UNKNOWN_INTENT | 未注册的动词或意图 |
 | `70` | LOOPD_ERROR | handler 内部异常 |
-| `75` | LOOP_TIMEOUT | shim 轮询超时（daemon 无响应） |
+| `75` | LOOP_TIMEOUT | （历史）shim 轮询超时；#52/#53 移除 shim 后不再产生 |
 
-shim 退出码 = outbox 响应的 `code` 字段；超时则退出 75。
+`75` 原由 `loop` shim 在轮询 `.loop/relay/outbox/` 超时时返回；shim 与 relay 通道已于 #52/#53 移除，该退出码不再出现。
 
 ---
 

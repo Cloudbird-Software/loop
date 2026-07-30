@@ -14,8 +14,9 @@ import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, r
 def _env(): return os.environ
 E = _env()
 
-# 9 个代理变量名（__getattr__ + CFG() 初始化都会用到）
-_PROXIES = {"ROOT","WS","LOOP","RELAY","REPO","ROLE","MODEL","SID","STATE"}
+# 8 个代理变量名（__getattr__ + CFG() 初始化都会用到）
+# RELAY 已移除（#52/#53：远程命令通道 relay/filemode/run 不再存在）
+_PROXIES = {"ROOT","WS","LOOP","REPO","ROLE","MODEL","SID","STATE"}
 
 def _cfg():
     """延迟加载配置：--help 时调用不到环境相关 handler 不会崩；
@@ -23,7 +24,6 @@ def _cfg():
     ROOT = pathlib.Path(E.get("LOOP_ROOT", E.get("GITHUB_WORKSPACE", "/workspace")))
     WS   = pathlib.Path(E.get("LOOP_WS", str(ROOT)))
     LOOP = ROOT/".loop"
-    RELAY = LOOP/"relay"
     ORG  = E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER", "Cloudbird-Software"))
     REPON = E.get("LOOP_REPO", (E.get("GITHUB_REPOSITORY","loop").split("/")[-1] if "/" in E.get("GITHUB_REPOSITORY","/loop") else "loop"))
     REPO = f"{ORG}/{REPON}"
@@ -31,19 +31,18 @@ def _cfg():
     MODEL = E.get("LOOP_MODEL", "unknown")
     SID = E.get("LOOP_SANDBOX_ID", "local-" + uuid.uuid4().hex[:8])
     STATE = LOOP/"daemon.json"
-    return ROOT, WS, LOOP, RELAY, ORG, REPO, ROLE, MODEL, SID, STATE
+    return ROOT, WS, LOOP, ORG, REPO, ROLE, MODEL, SID, STATE
 
 # --help/--version 先不实例化（避免 mkpath 等副作用）；handler 内首次访问用 CFG()
 _CFG = None
 def CFG():
     global _CFG
     if _CFG is None:
-        ROOT, WS, LOOP, RELAY, ORG, REPO, ROLE, MODEL, SID, STATE = _cfg()
+        ROOT, WS, LOOP, ORG, REPO, ROLE, MODEL, SID, STATE = _cfg()
         LOOP.mkdir(parents=True, exist_ok=True)
-        RELAY.mkdir(parents=True, exist_ok=True)
-        _CFG = {"ROOT":ROOT,"WS":WS,"LOOP":LOOP,"RELAY":RELAY,"ORG":ORG,
+        _CFG = {"ROOT":ROOT,"WS":WS,"LOOP":LOOP,"ORG":ORG,
                 "REPO":REPO,"ROLE":ROLE,"MODEL":MODEL,"SID":SID,"STATE":STATE}
-        # E包修复：把 9 个变量"物化"到模块全局变量，函数里裸引用不再走 __getattr__
+        # E包修复：把 8 个变量"物化"到模块全局变量，函数里裸引用不再走 __getattr__
         for _k, _v in _CFG.items():
             if _k in _PROXIES:
                 globals().setdefault(_k, _v)
@@ -52,10 +51,10 @@ def CFG():
 lock = threading.RLock()
 
 # ============================================================
-# 兼容层：全局裸变量 ROOT/WS/LOOP/RELAY/REPO/ROLE/MODEL/SID/STATE
+# 兼容层：全局裸变量 ROOT/WS/LOOP/REPO/ROLE/MODEL/SID/STATE
 # 用模块 __getattr__ 代理到 CFG()，免改 100 处引用。
 # ============================================================
-_PROXIES = {"ROOT","WS","LOOP","RELAY","REPO","ROLE","MODEL","SID","STATE"}
+_PROXIES = {"ROOT","WS","LOOP","REPO","ROLE","MODEL","SID","STATE"}
 def __getattr__(name):
     if name in _PROXIES:
         return CFG()[name]
@@ -156,42 +155,10 @@ def render_card(it, blk):
     return "\n".join(lines) + "\n"
 
 # ============================================================
-# Relay 分发 + file 模式（手册 5.2）
+# [已移除] Relay 分发 + file 模式（#52/#53）
+# relay_thread / filemode_thread 已删除：远程命令通道（.loop/relay/inbox、
+# .loop/IN.json）不再被接受。loopd 只通过 CLI（loop <verb>）接收指令。
 # ============================================================
-def relay_thread():
-    while True:
-        for f in sorted((RELAY/"inbox").glob("*.json")):
-            try: req = json.loads(f.read_text())
-            except Exception: f.unlink(missing_ok=True); continue
-            f.rename(RELAY/"done"/f.name)
-            out = {"id": req["id"], "code": 0, "stdout": "", "stderr": ""}
-            try:
-                h = HANDLERS.get(req["intent"])
-                if not h: out.update(code=64, stderr=f'UNKNOWN_VERB {req["intent"]}\n')
-                else:
-                    with lock: out.update(h(req.get("args", [])))
-            except Exception as e:
-                out.update(code=70, stderr=f"LOOPD_ERROR {type(e).__name__}: {e}\n")
-            tmp = RELAY/"outbox"/f'.{req["id"]}.tmp'; tmp.write_text(json.dumps(out))
-            tmp.rename(RELAY/"outbox"/f'{req["id"]}.json')
-            (LOOP/"OUT.md").write_text(                # file 模式共用
-                f'status: done\ncode: {out["code"]}\nintent: {req["intent"]}\n\n'
-                f'{out["stdout"]}\n---stderr---\n{out["stderr"]}\n')
-        time.sleep(int(E.get("LOOP_POLL_MS", "200"))/1000)
-
-def filemode_thread():                              # LOOP_IO_MODE=file
-    seen = 0
-    while True:
-        p = LOOP/"IN.json"
-        if E.get("LOOP_IO_MODE") == "file" and p.exists() and p.stat().st_mtime > seen:
-            seen = p.stat().st_mtime
-            try:
-                req = json.loads(p.read_text()); req["id"] = uuid.uuid4().hex[:10]
-                (LOOP/"OUT.md").write_text("status: pending\n")
-                tmp = RELAY/"inbox"/f'.{req["id"]}.tmp'; tmp.write_text(json.dumps(req))
-                tmp.rename(RELAY/"inbox"/f'{req["id"]}.json')
-            except Exception as e: (LOOP/"OUT.md").write_text(f"status: badjson\n{e}\n")
-        time.sleep(0.2)
 
 # ============================================================
 # next：阻塞取卡 + CAS 领卡 + 路径租约（手册 5.3）
@@ -752,56 +719,10 @@ def h_upstream(args):
     return {"stdout": f"OK (registered: {pkg})\n"}
 
 # ============================================================
-# run：白名单意图兜底
+# [已移除] run：白名单意图兜底（#52/#53）
+# load_intents / h_run / @intent("run") 已删除：远程意图执行通道不再存在。
+# loopd 不再从 intents.yaml 加载外部命令白名单，也不注册 run verb。
 # ============================================================
-def load_intents():
-    """加载 intents.yaml 白名单（简易解析，不依赖 PyYAML）。
-
-    按序查找：$LOOPD_INTENTS_PATH → /usr/local/etc/loopd/intents.yaml →
-    Path(__file__).parent / "intents.yaml"，三处都找不到才报错。
-    """
-    candidates = []
-    env_path = E.get("LOOPD_INTENTS_PATH")
-    if env_path:
-        candidates.append(pathlib.Path(env_path))
-    candidates.append(pathlib.Path("/usr/local/etc/loopd/intents.yaml"))
-    candidates.append(pathlib.Path(__file__).parent / "intents.yaml")
-    p = None
-    for c in candidates:
-        if c.exists():
-            p = c
-            break
-    if p is None:
-        raise FileNotFoundError(
-            "intents.yaml not found in any of: "
-            + ", ".join(str(c) for c in candidates)
-        )
-    intents = {}
-    for line in p.read_text().splitlines():
-        line = line.rstrip()
-        if not line or line.startswith("#") or line.strip() == "intents:":
-            continue
-        if line.startswith("  "):
-            k, _, v = line.strip().partition(":")
-            v = v.strip()
-            if v.startswith("["):
-                try:
-                    intents[k.strip()] = json.loads(v)
-                except Exception:
-                    pass
-    return intents
-
-@intent("run")
-def h_run(args):
-    if not args:
-        return {"code": 64, "stderr": "USAGE: loop run <intent>\n"}
-    name = args[0]
-    whitelist = load_intents()
-    if name not in whitelist:
-        return {"code": 64, "stderr": f"UNKNOWN_INTENT: {name}\n"}
-    cmd = whitelist[name]
-    p = sh(*cmd, cwd=str(WS), timeout=600)
-    return {"stdout": p.stdout, "stderr": p.stderr, "code": p.returncode}
 
 # ============================================================
 # retire：结束会话
@@ -911,7 +832,6 @@ Verbs:
   propose <file>      提波次（只允许改 waves/**）
   verdict <file>      交裁决（校验 head_sha 绑定）
   upstream <pkg>      登记依赖（查冷静期）
-  run <intent>        白名单意图兜底
   retire              结束会话（归档+通知点击器重开）
   status              自检（daemon/token/租约/计数）
   tick                跑 conductor tick 4 件（僵尸/依赖/inbox/48h 放行）
@@ -1006,9 +926,8 @@ def reaper_thread():
 # 主循环（手册 5.1）
 # ============================================================
 def main():
-    # 确保目录结构存在
-    for d in [LOOP, RELAY/"inbox", RELAY/"outbox", RELAY/"done",
-              LOOP/"logs", LOOP/"trash", LOOP/"audit", LOOP/"plan"]:
+    # 确保目录结构存在（#52/#53：RELAY/inbox/outbox/done 已移除）
+    for d in [LOOP, LOOP/"logs", LOOP/"trash", LOOP/"audit", LOOP/"plan"]:
         d.mkdir(parents=True, exist_ok=True)
     d = st()  # 初始化（加载已有 daemon.json 或建新）
     # v0.1.5 Fix A：新进程启动若无活跃卡，重置会话配额。
@@ -1017,8 +936,8 @@ def main():
     # 若有活跃卡（崩溃恢复中）则保留 ordinal，让 agent 续完。
     if not d.get("card"):
         st(session_ordinal=0, started=time.time())
-    for t in (relay_thread, heartbeat_thread, autosave_thread,
-              filemode_thread, reaper_thread):
+    # #52/#53：relay_thread / filemode_thread 已移除，不再启动远程命令通道线程
+    for t in (heartbeat_thread, autosave_thread, reaper_thread):
         threading.Thread(target=t, daemon=True).start()
     while True:
         time.sleep(3600)
