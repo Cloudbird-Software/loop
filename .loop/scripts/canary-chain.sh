@@ -94,6 +94,18 @@ for i in $(seq 1 20); do
   sleep 3
 done
 log "  -> mergeable=$MB (ok=$MERGEABLE_OK) after ${i} polls"
+# 等 required status checks 完成（enqueue 需要 checks 非 queued）
+CHECKS_OK=0
+for i in $(seq 1 40); do
+  PENDING=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json statusCheckRollup --jq '[.statusCheckRollup[]? | select(.status != "COMPLETED")] | length' 2>/dev/null || echo "1")
+  TOTAL=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json statusCheckRollup --jq '[.statusCheckRollup[]?] | length' 2>/dev/null || echo "0")
+  if [ "$TOTAL" -gt 0 ] && [ "$PENDING" = "0" ]; then
+    CHECKS_OK=1
+    break
+  fi
+  sleep 5
+done
+log "  -> checks completed (ok=$CHECKS_OK) after ${i} polls"
 # 入队（不因 gh 错误而中断 set -e）
 ENQ=$(gh api graphql -f query="mutation{ enqueuePullRequest(input:{pullRequestId:\"$PR_NODE_ID\"}){ mergeQueueEntry{ position state pullRequest{ number } } } }" 2>&1) || true
 log "  -> enqueue result: $ENQ"
