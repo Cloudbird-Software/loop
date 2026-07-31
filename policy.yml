@@ -16,6 +16,12 @@ execute:
   max_cards_per_session: 6
   race_tiers: [critical]         # 影子实现
   sandbox_pool_min: 8
+  sandbox:                       # R12-5: 复现沙盒执行环境约束
+    timeout_sec: 120             # 单条 repro.cmd 超时
+    memory_mb: 2048              # 内存上限
+    cpu_shares: 512              # CPU 权重
+    network: read_only           # 只读网络（可拉取但不可写生产仓）
+    writable_paths: [/tmp]       # 仅允许写 /tmp（无生产仓库写权限）
 upstream:
   min_age_days: 7
   trigger: on_wave_open          # ★不按周
@@ -34,6 +40,26 @@ review:
   arbitration_samples: 3         # 复现结果冲突时凑够几个样本才交 planner 仲裁
   harden_after_confirms: 2       # 同一 suggested_checker 被确认 N 次 → 强制转「写检查器」卡
   precision_floor: 0.5           # reviewer_model 的 claim 精度低于此值 → 自动降权/改路由
+  min_samples_for_demotion: 10   # R12-7: 降权决策最小样本量；不足时打印 INSUFFICIENT_SAMPLES 不降权
+  subjective_words:              # R12-1: 主观词表，命中且无可执行 repro 的 claim 一律拒收
+    - 优雅
+    - 清晰
+    - 更好
+    - 建议重构
+    - 最佳实践
+    - 我觉得
+    - 可能
+    - 似乎
+    - 应该
+    - 感觉
+    - 大概
+    - 建议考虑
+    - 不够优雅
+    - 可读性差
+    - 代码味道
+    - 坏味道
+    - 理想情况下
+    - 理论上
 gates:
   # gates/run_gates.py 读取本段决定一个 profile 应当执行哪些 gate（R10-3）。
   # 不得偷偷缩小集合：新增 gate 时必须加进 default profile，否则等于静默跳过（F-A 根因）。

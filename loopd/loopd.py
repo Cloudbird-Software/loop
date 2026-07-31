@@ -171,7 +171,12 @@ def h_next(args):
     deadline = time.time() + int(E.get("LOOP_NEXT_BLOCK_SEC", 60))
     while time.time() < deadline:
         busy = [b for _, b in cards(("claimed","in_progress"))]
+        # R12-4：显式排除未复现的 claim F-card（state=unconfirmed）——wave-level gate #2。
+        # cards(("ready",)) 已按 state 过滤，此处为 defense-in-depth：即使某张卡的 state
+        # 字段意外保留/被改回 unconfirmed，也不会被 impl 领取修复。
+        from conductor.claim_intake import is_claim_pickable_by_impl
         for it, blk in sorted(cards(("ready",)), key=lambda x: prio(x[1])):
+            if not is_claim_pickable_by_impl(blk): continue
             if blk.get("role") not in ROLE: continue
             if blk.get("blocked_by"): continue
             if blk["role"] == "verify" and blk.get("model") == MODEL: continue   # 强制异构

@@ -34,8 +34,25 @@ ROLE_CREATE_MAP = {
     "impl":         set(),     # impl 不能造 Card
     "verify":       set(),     # verify 不能造 Card
     "incident":     {"Incident", "Card"},  # Incident 检测器每日最多 2 张 hotfix Card
+    # R12-3: 强模型验收环角色阀门
+    "reviewer":     {"Claim"},               # reviewer 只能创建 Claim 对象，不能创建 Card/Wave/Milestone/Incident
+    "reproducer":   {"Reproduction", "Finding"},  # reproducer 只能创建 Reproduction 记录与对已确认 claim 的 Finding
 }
 INCIDENT_HOTFIX_DAILY_LIMIT = 2
+
+
+def check_self_adjudication(reviewer_model, reviewer_session, reproducer_model, reproducer_session):
+    """R12-3: 同一 (model, session_id) 既是 claim 作者又是 reproducer 时直接拒绝。
+
+    异构强制（CHARTER N6）：任何角色都不得对自己产出的对象做下一步判定。
+    model 维度相同即判定为自证（session 不同也不行——同一模型的两次推理不构成独立验证）。
+    """
+    if reviewer_model == reproducer_model:
+        raise ValueError(
+            f"SELF_ADJUDICATION_REFUSED: reproducer_model({reproducer_model}) "
+            f"== reviewer_model({reviewer_model}) — 同一模型不得复现自己的 claim "
+            f"(reviewer_session={reviewer_session}, reproducer_session={reproducer_session})"
+        )
 
 
 def _enforce_role(role, create_type):
