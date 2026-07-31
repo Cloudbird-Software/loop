@@ -1,0 +1,71 @@
+name: ci-security
+# ci-security 镜头 — workflow 静态安全检查（zizmor + pinact）（审查裁决 R11-8）。
+#
+# 背景：截至 2026-07-31，lenses/ci-security.sh 用 `zizmor ... || true` 假绿——
+# 工具崩/缺都吞成 0，SARIF 永远空。本 workflow 让镜头真跑：
+#   - zizmor（pip 安装）→ SARIF → GitHub code scanning 告警 + WAVE-14 evidence。
+#   - pinact run --check（verify）→ 校验所有 uses: 钉到 40 位 SHA。
+#   - 工具缺失/崩溃 → lenses/ci-security.sh 打印 LENS_NOT_EXECUTED 并非零退出
+#     （CHARTER N5：绝不静默 SKIP；旧的 `|| true` 假绿不复现）。
+# findings 不红镜头——它们经 SARIF 上报 code scanning；阻塞由各 gate 负责。
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # upload-sarif 上报 code scanning 告警所需
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install zizmor + PyYAML
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install zizmor PyYAML
+
+      - name: Install pinact (verify mode)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tmpd="$(mktemp -d)"
+          gh release download v4.1.1 -R suzuki-shunsuke/pinact -p 'pinact_linux_amd64.tar.gz' -D "$tmpd"
+          tar -xzf "$tmpd/pinact_linux_amd64.tar.gz" -C "$tmpd"
+          sudo install -m 0755 "$tmpd/pinact" /usr/local/bin/pinact
+          pinact version
+
+      - name: Run ci-security lens
+        run: |
+          set -euo pipefail
+          bash lenses/ci-security.sh
+
+      - name: Upload SARIF artifact
+        if: always() && hashFiles('.loop/audit/ci-security.sarif') != ''
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
+        with:
+          name: ci-security-sarif
+          path: .loop/audit/ci-security.sarif
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always() && hashFiles('.loop/audit/ci-security.sarif') != ''
+        uses: github/codeql-action/upload-sarif@6e93df3c1b954c609ccb2761345ddc9dba76b649 # v3.28.1
+        with:
+          sarif_file: .loop/audit/ci-security.sarif
+          category: zizmor

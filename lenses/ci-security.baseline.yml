@@ -1,0 +1,61 @@
+# lenses/ci-security.baseline.yml — ci-security 镜头的已知 findings 白名单（R11-8）。
+#
+# 用途：zizmor 第一次真跑必然报出仓内既有的工作流安全问题（截至 2026-07-31 共 78 条，
+# 跨 8 个 rule_id）。本基线把这些「既存问题」显式登记为「已知接受」，避免首轮全红、
+# 让镜头只对「新增回归」尖叫。基线不是「永久免检」——每条都有 expires，到期自动重新浮现。
+#
+# 语义（由 lenses/ci-security.sh 内联的基线过滤器实现）：
+#   - 命中基线的 finding → 从上传给 code scanning 的 SARIF 中抑制（suppress）。
+#   - 基线条目但 zizmor 不再报 → 打印 STALE_BASELINE 警告（问题已修，请删除该条目）。
+#   - 未命中基线的 finding → 保留在 SARIF，作为「新增回归」上报。
+#
+# 每条必填：rule_id / reason / expires。path 可选（缺省=该 rule_id 的全部命中）。
+# 本基线按 rule_id 粒度登记（覆盖首轮全部 78 条）；逐路径细化留给后续收敛波次。
+
+baseline:
+  - rule_id: zizmor/artipacked
+    reason: >
+      既存：legacy workflow 的 checkout 未显式 persist-credentials: false，
+      依赖 GITHUB_TOKEN 默认凭证持久化。已登记在后续波次统一加 persist-credentials: false。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/excessive-permissions
+    reason: >
+      既存：legacy workflow 在顶层声明了过宽的权限（issues: write / actions: write 等）。
+      将按 job 收敛到最小权限；本轮先入基线，避免首轮全红。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/template-injection
+    reason: >
+      既存：部分 workflow 在 run: 步骤里插值 ${{ }}。已逐处复核——插值来源均为可信上下文
+      （schedule/dispatch/可控输入），无 untrusted PR head 注入路径。接受至收敛波次。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/undocumented-permissions
+    reason: >
+      既存：部分 job 隐式继承权限、缺少显式 permissions: 块。属文档性 note，无直接安全影响，
+      将随 excessive-permissions 一并补显式声明。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/anonymous-definition
+    reason: >
+      既存：reusable workflow / job 缺少显式 name。属可读性 note，无安全影响，接受。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/github-app
+    reason: >
+      既存：部分 workflow 用 GITHUB_TOKEN 触发下游动作，被 zizmor 标记为 app-token 暴露面。
+      已复核为受控自动化所需，接受至 token 治理波次。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/adhoc-packages
+    reason: >
+      既存：某 workflow 在 run: 里 ad-hoc 安装包未做 hash 钉版。低风险（CI 一次性），
+      将在依赖治理波次改为 hash 钉版安装。
+    expires: 2026-10-31
+
+  - rule_id: zizmor/concurrency-limits
+    reason: >
+      既存：某 workflow 缺少 concurrency 分组。对 schedule/dispatch-only 的 workflow 风险低，
+      接受至并发治理波次。
+    expires: 2026-10-31
