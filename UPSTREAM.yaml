@@ -165,6 +165,15 @@ items:
     degrade_path: "退回手写 App token 生成（gh api /app/installations + jwt），丢失自动续期"
     note: "R13-5 补登：template-sync.yml 的跨仓 App token 生成步骤引用。"
 
+  - name: actions/upload-artifact
+    seam: gate
+    kind: action
+    pin: "v4.5.0"
+    sha256: "b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e"   # commit SHA（audit.yml / nightly-rubric.yml 引用）
+    license: MIT
+    degrade_path: "退回 actions/upload-artifact@v3 或不归档 artifact，丢失 evidence 留证"
+    note: "R14-2 补登：nightly-rubric.yml 的 retro/promptfoo artifact 上传步骤引用；audit.yml / ci-security.yml 亦引用。ci-security.yml 另用 6f51ac03... SHA（同 tag v4.5.0 不同 commit，历史遗留），两者均为 v4.5.0。"
+
   # ── B 执行体配套（bootstrap 装的 CLI，loopd 依赖） ──
   - name: cli/cli
     seam: B
