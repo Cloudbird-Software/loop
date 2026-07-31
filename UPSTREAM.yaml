@@ -119,6 +119,25 @@ items:
     degrade_path: "全历史密钥扫描降频到每月一次；PR 阻塞仍靠 gitleaks"
     note: "R11-3 回填；sha256 对应 release v3.70.0 资产 trufflehog_3.70.0_linux_amd64.tar.gz，与 trufflehog_3.70.0_checksums.txt 交叉核对一致。"
 
+  # ── GitHub Actions（workflow uses 引用，钉到 40 位 SHA；R11-1 补登） ──
+  - name: actions/checkout
+    seam: gate
+    kind: action
+    pin: "v4.4.0"
+    sha256: "11d5960a326750d5838078e36cf38b85af677262"   # commit SHA（action 引用即以此 SHA 钉）
+    license: MIT
+    degrade_path: "退回 actions/checkout@v3 或手写 git clone 步骤，丢失 sparse-checkout / token 透传"
+    note: "R11-1 补登：gates.yml / pr-ci.yml / ci-security.yml 等所有 workflow 均引用；pin 为 tag，sha256 字段记录所钉 commit SHA（GitHub Actions 的钉法即用 SHA 而非二进制哈希）。"
+
+  - name: actions/setup-python
+    seam: gate
+    kind: action
+    pin: "v5.3.0"
+    sha256: "0b93645e9fea7318ecaed2b359559ac225c90a2b"   # commit SHA
+    license: MIT
+    degrade_path: "退回 actions/setup-python@v4 或手写 pyenv 装步骤，丢失 cache / token 透传"
+    note: "R11-1 补登：所有 workflow 的 Python 环境安装步骤引用；pin 为 tag，sha256 字段记录所钉 commit SHA。"
+
   # ── B 执行体配套（bootstrap 装的 CLI，loopd 依赖） ──
   - name: cli/cli
     seam: B
