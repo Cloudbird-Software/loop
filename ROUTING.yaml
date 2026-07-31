@@ -80,8 +80,8 @@ routes:
   - domain: verify
     action: "*"
     tier: "*"
-    provider: deepseek
-    model: deepseek-chat
+    provider: qwen
+    model: qwen3-max
     metrics: {}
     status: deferred_to_verdict_ci_job
 
