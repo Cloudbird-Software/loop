@@ -23,8 +23,59 @@ gh --version | head -1
 # mise：已装则跳过
 if ! command -v mise >/dev/null 2>&1; then
   echo "Installing mise..."
-  # TODO: sha256 校验位由 loop upstream 流程现场填
-  curl -fsSL https://mise.run | bash
+  # R11-3: 下载 https://mise.run 到临时文件 → 算 sha256 → 与 UPSTREAM.yaml 中
+  # jdx/mise 的 sha256 比对 → 一致才 bash 执行；不一致或取不到期望哈希则报错并非零退出
+  # （绝不盲跑未校验的安装脚本）。期望 sha256 优先读本地 UPSTREAM.yaml，否则从 bootstrap
+  # ref 拉取（沙盒阶段 UPSTREAM.yaml 尚未落地，故走 RAW_BASE 远程读取）。
+  MISE_INSTALL_URL="https://mise.run"
+  export MISE_UPSTREAM_URL="${RAW_BASE}/UPSTREAM.yaml"
+  if MISE_EXPECTED_SHA256="$(python3 - <<'PY'
+import os, re, sys, urllib.request
+data = None
+try:
+    with open("UPSTREAM.yaml", encoding="utf-8") as f:
+        data = f.read()
+except Exception:
+    url = os.environ.get("MISE_UPSTREAM_URL", "")
+    if url:
+        try:
+            data = urllib.request.urlopen(url, timeout=15).read().decode("utf-8", "replace")
+        except Exception:
+            data = None
+if not data:
+    sys.exit(1)
+# 仅在 jdx/mise 条目块内（到下一个 `- name:` 之前）取首个 sha256 字段（64 位十六进制）
+# 注意：Python re 不支持 POSIX [[:space:]]，故用 [ \t] 表示行首空白。
+m = re.search(r'name:[ \t]*jdx/mise\b(?:(?!^[ \t]*- name:).)*?sha256:[ \t]*"?([0-9a-fA-F]{64})"?', data, re.S | re.M)
+if not m:
+    sys.exit(1)
+print(m.group(1).lower())
+PY
+)"; then
+    :
+  else
+    MISE_EXPECTED_SHA256=""
+  fi
+  MISE_TMP="$(mktemp)"
+  if ! curl -fsSL "$MISE_INSTALL_URL" -o "$MISE_TMP"; then
+    echo "ERROR: failed to download mise.run install script" >&2
+    rm -f "$MISE_TMP"
+    exit 1
+  fi
+  MISE_ACTUAL_SHA256="$(sha256sum "$MISE_TMP" | awk '{print $1}')"
+  if [ -z "$MISE_EXPECTED_SHA256" ]; then
+    echo "ERROR: mise sha256 unavailable in UPSTREAM.yaml (could not read expected hash for jdx/mise); refusing to run unverified install script" >&2
+    rm -f "$MISE_TMP"
+    exit 1
+  fi
+  if [ "$MISE_ACTUAL_SHA256" != "$MISE_EXPECTED_SHA256" ]; then
+    echo "ERROR: mise.run sha256 mismatch (expected ${MISE_EXPECTED_SHA256}, got ${MISE_ACTUAL_SHA256}); refusing to run install script" >&2
+    rm -f "$MISE_TMP"
+    exit 1
+  fi
+  echo "  mise.run sha256 OK (${MISE_ACTUAL_SHA256})"
+  bash "$MISE_TMP"
+  rm -f "$MISE_TMP"
   export PATH="$HOME/.local/bin:$PATH"
 fi
 mise --version
