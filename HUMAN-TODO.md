@@ -90,11 +90,26 @@ R10-4 的验收要求：`gate_settings_roundtrip.py` 还未实现，需 R10-4 �
 
 ### [ ] B2. 密钥降权与轮换
 
-**动作**（细节见 R11-4 产出的 `docs/密钥清单.md`）：
-1. `LOOP_CANARY_TOKEN`：确认其权限范围，凡 `GITHUB_TOKEN` 能胜任之处一律替换。
-2. 为全部凭证设定轮换周期并执行首次轮换（当前全仓 grep 不到任何轮换策略）。
+**权威清单**：`docs/密钥清单.md`（R11-4 已建立，枚举全仓 12 个凭证 + 6 个逻辑凭证组，
+逐条标注承载身份/最小权限/使用者/轮换周期/上次轮换/责任人）。后续任何凭证变更须同步更新该文件。
+
+**R11-4 已自动完成的部分**（无需你动手）：
+1. `scribe.yml`：journal clone/push 与镜像 push 的 token 已移出 URL（改走 `gh auth setup-git`
+   注入凭据），`grep -rn 'x-access-token' .github/` 输出为空。
+2. `canary.yml`：两个 Incident 步骤（chain break / survival break）已改用 `${{ secrets.GITHUB_TOKEN }}`
+   + job 级 `issues: write`，收缩 `LOOP_CANARY_TOKEN` 的使用面。`LOOP_CANARY_TOKEN` 仅保留在
+   `Run canary chain` 步骤（跨仓操作 product-x，GITHUB_TOKEN 作用域不够，无法替换）。
+3. `scribe.yml` / `canary.yml` 顶层 `permissions:` 已最小化为 `contents: read`，按需在 job 级展开。
+4. `scribe.yml` 一处引用幽灵 secret `JOURNAL_MIRROR_TOKEN` 的错误消息已修正为 `SCRIBE_GH_TOKEN`。
+
+**仍需你做（AI 无 org secret 管理权限无法代做）**：
+1. `LOOP_CANARY_TOKEN` / `SCRIBE_GH_TOKEN`：由高权限 PAT 改 fine-grained PAT 或迁 GitHub App，
+   按 `docs/密钥清单.md` 组 A 的最小权限范围收敛。
+2. 为全部凭证设定轮换周期并执行**首次轮换**（当前全仓 grep 不到任何轮换策略；`docs/密钥清单.md`
+   已给出建议周期：PAT 90 天 / App private key 365 天 / LLM key 180 天）。
 3. 复用情况收敛：`LLM_GATEWAY_KEY` 当前同时服务 strongest provider 的 2 条 plan 路由
    与 nightly-rubric workflow，建议拆分以便独立吊销。
+4. `POLICY_W_APP_*`：apply 路径被 CHARTER N5 禁用，若长期不用建议下架 App 或收回 `rulesets:write`。
 
 **澄清（避免你被误导）**：专家称 canary "用 admin PAT 绕过分支保护" —— 这是**假的**。
 `canary-chain.sh:76-79` 明确拒绝 `--admin`，改走 GraphQL `enqueuePullRequest` 进 merge queue；

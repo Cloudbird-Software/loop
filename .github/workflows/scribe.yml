@@ -2,7 +2,9 @@ name: scribe
 on:
   schedule: [{cron: "0 22,10 * * *"}]
   workflow_dispatch:
-permissions: {contents: read, issues: write}
+# 顶层最小权限：GITHUB_TOKEN 仅 checkout 需 contents:read；所有跨仓/API 写操作走 SCRIBE_GH_TOKEN (PAT)，
+# 不依赖 GITHUB_TOKEN 的 issues:write，故顶层不授予（acceptance #4：最小化，按需在 job 级展开）。
+permissions: {contents: read}
 concurrency: {group: scribe, cancel-in-progress: false}
 jobs:
   export:
@@ -94,13 +96,16 @@ jobs:
         run: |
           set -e
           test -n "$JOURNAL_REPO" || { echo "ERROR: vars.JOURNAL_REPO not set"; exit 1; }
-          test -n "$GH_TOKEN"    || { echo "ERROR: secrets.JOURNAL_MIRROR_TOKEN not set"; exit 1; }
+          test -n "$GH_TOKEN"    || { echo "ERROR: secrets.SCRIBE_GH_TOKEN not set"; exit 1; }
           TODAY=$(date -u +%Y-%m-%d)
           TS=$(date -u +%Y%m%dT%H%M%SZ)
           cd /tmp
           rm -rf journal-clone
-          # 用 token 拼 https 克隆 URL（不硬编码地址，地址来自 JOURNAL_REPO 变量）
-          JOURNAL_URL="https://x-access-token:${GH_TOKEN}@github.com/${JOURNAL_REPO}.git"
+          # 鉴权走 git credential helper：gh auth setup-git 读 GH_TOKEN 并为 github.com
+          # 注入凭据。token 不再拼进克隆/推送 URL（旧版把 token 嵌入 remote URL，会让
+          # token 出现在 remote URL / git config / 进程参数里，属密钥卫生问题）。
+          gh auth setup-git
+          JOURNAL_URL="https://github.com/${JOURNAL_REPO}.git"
           git clone --depth 1 "$JOURNAL_URL" journal-clone
           cd journal-clone
           # 按日期分目录
@@ -115,12 +120,13 @@ jobs:
           git config user.name  "loop-scribe-bot"
           git config user.email "scribe-bot@users.noreply.github.com"
           git commit -m "scribe: export ${TODAY} ${TS}" || { echo "nothing to commit"; exit 0; }
-          # 第一远端：journal 仓库本身
+          # 第一远端：journal 仓库本身（凭据已由 gh auth setup-git 注入，URL 不含 token）
           git push origin HEAD
-          # 第二远端（镜像，可选）：从变量读地址，不硬编码
+          # 第二远端（镜像，可选）：地址来自变量，不硬编码；token 同样走 credential helper，
+          # 不再注入 URL。镜像须与 journal 同样托管在 github.com（复用同一 GH_TOKEN 凭据）；
+          # 若将来镜像换到非 github.com 主机，需为该 host 单独配置 credential helper。
           if [ -n "$JOURNAL_MIRROR_URL" ]; then
-            MIRROR_URL="${JOURNAL_MIRROR_URL/https:\/\//https:\/\/x-access-token:${GH_TOKEN}@}"
-            git remote add mirror "$MIRROR_URL" 2>/dev/null || git remote set-url mirror "$MIRROR_URL"
+            git remote add mirror "$JOURNAL_MIRROR_URL" 2>/dev/null || git remote set-url mirror "$JOURNAL_MIRROR_URL"
             git push mirror HEAD
             echo "pushed to second remote (mirror)"
           else
