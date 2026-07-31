@@ -1,0 +1,1 @@
+negative-proof paths gate
