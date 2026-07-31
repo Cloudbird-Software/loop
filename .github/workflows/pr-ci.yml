@@ -224,7 +224,8 @@ jobs:
   # 任何 gate 失败/缺席/崩溃都会让本 job 红（CHARTER N8.3）。
   # ============================================================
   gates:
-    needs: [test]   # 等待 test 通过后再跑门禁（避免无谓的 gate 执行）
+    # 门禁是策略合规检查，必须独立于 test 执行——否则 test 失败时 gates 被 skip，
+    # 无法证明某道 gate 自身会红（wave-level gate #2 负向证明依赖此设计）。
     uses: ./.github/workflows/gates.yml
     with:
       profile: default
