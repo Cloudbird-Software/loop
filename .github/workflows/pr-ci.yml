@@ -39,9 +39,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install PyYAML pytest
       - name: pytest
+        # 告警预算门槛（R14-4）：把 DeprecationWarning 当 error 处理，预算=0。
+        # 作用：阻断 utcnow()/utcfromtimestamp() 等弃用 API 的回潮——任何新增
+        # DeprecationWarning 都会让本 job 红，从而在 PR 阶段拦截退化。
+        # 当前基线：321 tests 全绿、0 DeprecationWarning（test_B_pkg.py 已把 21 处
+        # utcnow() 收敛为 now(timezone.utc).replace(tzinfo=None)）。
         run: |
           set -euo pipefail
-          python -m pytest -q
+          python -m pytest -q -W error::DeprecationWarning
 
   # ============================================================
   # lint —— 语法与静态自检。不引入任何新的第三方 linter。

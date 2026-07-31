@@ -462,22 +462,50 @@ def open_rollback_pr(args, product_repo, default_branch, old_pin_sha, old_tag,
     return pr_url
 
 
-def _open_incident(args, product_repo, title, body):
-    """开 Incident（gh issue create）。dry-run 下只打印。失败不抛（只警告）。"""
+def _open_incident(args, product_repo, title, body, label="loop-bump-alert"):
+    """开 Incident（gh issue create）。dry-run 下只打印。失败不抛（只警告）。
+
+    label 默认 loop-bump-alert；Q 指标未达标用 metric-incident（R14-3）。
+    product_repo 为 None 时不开 --repo（落到当前仓，即 loop 仓）。"""
     if getattr(args, "dry_run", False):
-        print(f"[dry-run] INCIDENT: {product_repo} — {title}")
+        print(f"[dry-run] INCIDENT: {product_repo or '(current repo)'} — {title}")
         return None
     env = dict(os.environ)
-    r = subprocess.run(
-        ["gh", "issue", "create", "--repo", product_repo,
-         "--title", title, "--body", body, "--label", "loop-bump-alert"],
-        capture_output=True, text=True, env=env)
+    cmd = ["gh", "issue", "create",
+           "--title", title, "--body", body, "--label", label]
+    if product_repo:
+        cmd[1:1] = ["--repo", product_repo]
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
-        print(f"WARN: gh issue create failed in {product_repo}: {r.stderr.strip()[:200]}", file=sys.stderr)
+        print(f"WARN: gh issue create failed in {product_repo or '(current repo)'}: "
+              f"{r.stderr.strip()[:200]}", file=sys.stderr)
         return None
     url = r.stdout.strip()
-    print(f"INCIDENT: {product_repo} {title} -> {url}")
+    print(f"INCIDENT: {product_repo or '(current repo)'} {title} -> {url}")
     return url
+
+
+def _loop_repo_for_incident():
+    """返回开 Incident 用的 loop 仓坐标：优先 GITHUB_REPOSITORY，回退默认。"""
+    return E.get("GITHUB_REPOSITORY") or "Cloudbird-Software/loop"
+
+
+def _check_q_thresholds(args):
+    """调用 bench/metrics.py compute-q --check，返回未达标 Q 指标描述列表（R14-3）。
+
+    bench 后调用；未达标不静默——调用方据此开 Incident（label=metric-incident）。
+    每项形如 'Q5 value=0.0 target=1.0 direction=ge'。失败不抛（只警告）。"""
+    env = dict(os.environ)
+    r = subprocess.run(
+        ["python3", str(pathlib.Path(args.bench_dir) / "metrics.py"),
+         "compute-q", "--evidence-dir", str(args.bench_dir), "--check"],
+        capture_output=True, text=True, env=env)
+    failed = []
+    for ln in (r.stdout or "").splitlines():
+        s = ln.strip()
+        if s.startswith("Q_THRESHOLD_FAILED:"):
+            failed.append(s[len("Q_THRESHOLD_FAILED:"):].strip())
+    return failed
 
 
 def _resolve_loop_new_sha(args, rel, loop_repo):
@@ -569,7 +597,10 @@ def main():
             if not products:
                 print(f"SKIP: {name} no enabled products in products.yml")
                 continue
-            # bench 重放一次（产品无关）；每个产品仓各自 compare + 决策（验收 #4）
+            # bench 前后各跑一次（R14-3）：before = bench/baseline.json（当前 pin 的
+            # replay 卡聚合，由 compare_with_baseline 自动生成/读取），after = 新 pin 重放
+            # （run_replay_after）；compare 决定是否 bump。这与"bump 前跑 baseline、bump 后
+            # 跑 after"等价：before=当前基线，after=新 pin 重放，不劣化才 bump。
             simulated_loop = rel.get("simulated_after") if args.dry_run else None
             after_loop = run_replay_after(args, simulated_after=simulated_loop)
             print(f"REPLAY: {name} cards={after_loop.get('replayed_cards',0)}")
@@ -582,6 +613,10 @@ def main():
                         metric_detail = b[len("REGRESSED:"):].strip()
                         break
                 print(f"REGRESSED: loop {metric_detail}")
+            # Q 指标阈值检查（R14-3）：bench 后调用，未达标开 Incident（不静默）
+            q_failed_loop = _check_q_thresholds(args)
+            for qf in q_failed_loop:
+                print(f"Q_THRESHOLD_FAILED: loop {qf}")
             for prod in products:
                 prod_repo = prod.get("repo", "")
                 prod_branch = prod.get("default_branch", "main")
@@ -595,6 +630,14 @@ def main():
                         f"({metric_detail}); no bump PR opened.")
                     n_regressed += 1
                     continue
+                # Q 指标未达标 → 开 Incident（label=metric-incident，不静默）；
+                # 不阻断 bump（仅劣化超阈值才拒绝合并，R14-3 验收 #3）
+                if q_failed_loop:
+                    _open_incident(args, prod_repo,
+                        f"[loop-bump] Q threshold unmet on {new_tag_loop}",
+                        f"loop bump to {new_tag_loop} @{new_sha_loop[:12]}: Q threshold failed "
+                        f"({', '.join(q_failed_loop)}); bump PR still opened; Incident for visibility.",
+                        label="metric-incident")
                 try:
                     bump_loop_pin(args, it, new_tag_loop, new_sha_loop,
                                   loop_current_pin, prod_repo, prod_branch)
@@ -608,7 +651,8 @@ def main():
                     n_regressed += 1
             continue  # loop 不走通用 pin_back（pin 在产品仓侧）
 
-        # 重放 N 张卡得四指标
+        # 重放 N 张卡得四指标（before = bench/baseline.json 当前 pin 基线，
+        # after = 新 pin 重放；compare 即"前后各跑一次"，R14-3）
         simulated = rel.get("simulated_after") if args.dry_run else None
         after = run_replay_after(args, simulated_after=simulated)
         print(f"REPLAY: {name} cards={after.get('replayed_cards',0)}")
@@ -617,6 +661,17 @@ def main():
         # 拆分：表格给人类读，REGRESSED 行重写成报告行（带包名，机器可解析）。
         table_part, _, regressed_block = table.partition("\nREGRESSED:")
         print(table_part.rstrip())
+        # Q 指标阈值检查（R14-3）：bench 后调用，未达标不静默
+        q_failed = _check_q_thresholds(args)
+        for qf in q_failed:
+            print(f"Q_THRESHOLD_FAILED: {name} {qf}")
+        if q_failed and not regressed:
+            # Q 未达标但 bench 未劣化 → 开 Incident（不静默），不 pin_back（仅劣化才拒绝合并）
+            _open_incident(args, _loop_repo_for_incident(),
+                f"[metric] Q threshold unmet on {name} -> {new_pin}",
+                f"dependency bump {name} -> {new_pin}: Q threshold failed "
+                f"({', '.join(q_failed)}); bump not blocked (no bench regression).",
+                label="metric-incident")
         if regressed:
             for ln in regressed_block.splitlines():
                 body = ln.strip()

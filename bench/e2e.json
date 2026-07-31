@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "doc": "E2E 7 天无人值守连续运行基线（WAVE-14 R14-6）。骨架由 impl 阶段产出；真实数据由 verify 角色（异构执行者）按 docs/E2E验收剧本.md 第 6 节执行后填充。在 final_metrics 与 invariants.human_interventions 落定前，本文件不代表任何 ready 结论。",
+  "wave": "WAVE-14",
+  "card_id": "R14-6",
+  "subject_repo": "product-probe",
+  "executor_role": "verify",
+  "heterogeneous_executor_required": true,
+  "observation_window_days": 7,
+  "status": "skeleton_pending_run",
+  "t0": null,
+  "t1": null,
+
+  "events": {
+    "cards": [],
+    "findings": [],
+    "claims": [],
+    "wave_acceptance": [],
+    "bumps": [],
+    "self_heals": []
+  },
+
+  "invariants": {
+    "no_fake_green_always_green": null,
+    "no_fake_green_daily_samples": [],
+    "human_interventions": null,
+    "intervention_log": []
+  },
+
+  "final_metrics": {
+    "Q0": {"value": null, "target": null, "status": null, "unit": null},
+    "Q1": {"value": null, "target": null, "status": null, "unit": null},
+    "Q2": {"value": null, "target": null, "status": null, "unit": null},
+    "Q3": {"value": null, "target": null, "status": null, "unit": null},
+    "Q4": {"value": null, "target": null, "status": null, "unit": null},
+    "Q5": {"value": null, "target": null, "status": null, "unit": null}
+  },
+
+  "negative": {
+    "gate_bypass": {"blocked": null, "incident": null, "evidence_ref": null},
+    "model_lying": {"rejected": null, "demoted": null, "evidence_ref": null},
+    "bump_regressed": {"rolled_back": null, "incident": null, "evidence_ref": null},
+    "credential_expired": {"incident_opened": null, "needs_human": null, "evidence_ref": null}
+  },
+
+  "daily_samples": [],
+
+  "ready_declaration": {
+    "declared": false,
+    "declared_at": null,
+    "declared_by": null,
+    "blockers": ["7 天无人值守连续运行尚未执行（需异构 verify 角色按 docs/E2E验收剧本.md 执行）"]
+  }
+}
