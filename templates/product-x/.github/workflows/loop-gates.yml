@@ -25,6 +25,6 @@ jobs:
     uses: Cloudbird-Software/loop/.github/workflows/reusable-gates.yml@0000000000000000000000000000000000000000
     with:
       profile: strict
-      loop-sha: ${{ vars.LOOP_SHA }}
+      loop-sha: 0000000000000000000000000000000000000000
     secrets:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

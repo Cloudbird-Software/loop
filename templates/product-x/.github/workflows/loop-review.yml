@@ -33,7 +33,7 @@ jobs:
     uses: Cloudbird-Software/loop/.github/workflows/reusable-review.yml@0000000000000000000000000000000000000000
     with:
       required: false
-      loop-sha: ${{ vars.LOOP_SHA }}
+      loop-sha: 0000000000000000000000000000000000000000
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
