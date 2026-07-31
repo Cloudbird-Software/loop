@@ -46,11 +46,21 @@ def _write_upstream(tmp_path, items):
 
 
 def _run_lockdiff(tmp_path):
-    """在 tmp_path 仓里跑 lockdiff.py，返回 (exit_code, stdout_json, stderr)。"""
+    """在 tmp_path 仓里跑 lockdiff.py，返回 (exit_code, stdout_json, stderr)。
+
+    清理 CI 环境变量（GITHUB_SHA / GITHUB_BASE_REF 等），确保测试 hermetic：
+    否则在 GitHub Actions 里跑时，GITHUB_SHA 指向 loop 仓的 merge commit，
+    该 SHA 在 tmp_path 仓里不存在，git diff 会静默失败 → "no lockfile changes"。
+    """
+    env = {**os.environ}
+    for k in ("GITHUB_SHA", "GITHUB_BASE_REF", "GITHUB_REPOSITORY",
+              "GITHUB_REF", "GITHUB_HEAD_REF"):
+        env.pop(k, None)
+    env["LOOP_CI_BASE"] = "HEAD~1"
     p = subprocess.run(
         [sys.executable, os.path.join(GATES, "lockdiff.py")],
         cwd=str(tmp_path), capture_output=True, text=True,
-        env={**os.environ, "LOOP_CI_BASE": "HEAD~1"},
+        env=env,
     )
     out = None
     try:

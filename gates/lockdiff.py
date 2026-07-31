@@ -203,6 +203,12 @@ def validate_against_upstream(add_pkgs, items):
 def main():
     base = base_ref()
     head = os.environ.get("GITHUB_SHA", "HEAD")
+    # GITHUB_SHA 可能指向当前仓不存在的 commit（例如被复用 workflow 在不同仓上下文里跑）；
+    # 验证 head 可解析，否则回退 HEAD，避免 git diff 静默失败 → 假绿。
+    if head != "HEAD":
+        rv = run("git", "rev-parse", "--verify", "--quiet", head)
+        if rv.returncode != 0:
+            head = "HEAD"
     lockfiles = changed_lockfiles(base, head)
 
     if not lockfiles:
