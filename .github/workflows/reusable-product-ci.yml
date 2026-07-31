@@ -76,7 +76,7 @@ jobs:
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         if: inputs.language == 'go'
         with:
           go-version: ${{ inputs.go-version }}
@@ -142,7 +142,7 @@ jobs:
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         if: inputs.language == 'go'
         with:
           go-version: ${{ inputs.go-version }}
@@ -194,7 +194,7 @@ jobs:
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         if: inputs.language == 'go'
         with:
           go-version: ${{ inputs.go-version }}
