@@ -63,6 +63,9 @@
           },
           {
             "context": "schemas"
+          },
+          {
+            "context": "gates"
           }
         ]
       }
