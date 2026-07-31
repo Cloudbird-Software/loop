@@ -13,8 +13,8 @@ name: reusable-gates
 #     任何非零退出码都让本 job 红。
 #   - 产品仓无法通过传参把某道 gate 关成 SKIP——只能通过 policy.yml 的 profile 显式声明。
 #     本 workflow 不暴露 gate 集合输入（profile 是唯一开关面），故传参无法缩小集合。
-#   - 不使用 `secrets: inherit`：GITHUB_TOKEN 在 workflow_call 级别声明，由调用方显式传入；
-#     GH_TOKEN / GITHUB_TOKEN 两个环境变量均映射到该 token（gate 读 PR body / 评论所需）。
+#   - 不使用 `secrets: inherit`：GH_TOKEN 在 workflow_call 级别声明，由调用方显式传入；
+#     环境变量 GH_TOKEN 与 GITHUB_TOKEN 均映射到该 token（gate 读 PR body / 评论所需）。
 #   - 所有 actions/* 钉 40 位 SHA + 行尾版本注释（CHARTER N4）。
 #   - 铁律（CHARTER N5）：本文件不允许 `|| true`、`set +e`、`continue-on-error: true`。
 # ============================================================
@@ -37,7 +37,7 @@ on:
         default: "Cloudbird-Software/loop"
     secrets:
       GH_TOKEN:
-        description: "调用方仓的 GITHUB_TOKEN（gate 读 PR/评论所需；传值时用 ${{ secrets.GITHUB_TOKEN }}）"
+        description: "调用方仓的 GitHub token（gate 读 PR/评论所需；传值时传入 secrets.GITHUB_TOKEN）"
         required: true
 
 permissions:
