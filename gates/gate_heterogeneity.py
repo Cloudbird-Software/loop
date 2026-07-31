@@ -27,6 +27,13 @@ ROUTING_PATH = os.environ.get("ROUTING_PATH", "ROUTING.yaml")
 def load_yaml(path):
     try:
         import yaml
+        # 产品仓场景：ROUTING.yaml 在 loop 侧（LOOP_ROOT），不在产品仓
+        if not os.path.exists(path):
+            loop_root = os.environ.get("LOOP_ROOT", "")
+            if loop_root:
+                alt = os.path.join(loop_root, path)
+                if os.path.exists(alt):
+                    path = alt
         with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
@@ -202,9 +209,17 @@ def check_verdict_evidence(verdict, impl_model):
 
 
 def main():
-    routing_data = load_yaml(ROUTING_PATH)
+    routing_path = ROUTING_PATH
+    # 产品仓场景：ROUTING.yaml 在 loop 侧（LOOP_ROOT）
+    if not os.path.exists(routing_path):
+        loop_root = os.environ.get("LOOP_ROOT", "")
+        if loop_root:
+            alt = os.path.join(loop_root, routing_path)
+            if os.path.exists(alt):
+                routing_path = alt
+    routing_data = load_yaml(routing_path)
     if not routing_data:
-        print("FAIL: cannot load ROUTING.yaml")
+        print(f"FAIL: cannot load ROUTING.yaml (tried {routing_path})")
         sys.exit(1)
 
     routes = routing_data.get("routes", [])
@@ -229,7 +244,7 @@ def main():
 
     # 3. 注释一致性检查
     try:
-        with open(ROUTING_PATH, encoding="utf-8") as f:
+        with open(routing_path, encoding="utf-8") as f:
             routing_text = f.read()
         pa, ma = resolve_provider_model(impl_route, providers, default)
         pb, mb = resolve_provider_model(verify_route, providers, default)
