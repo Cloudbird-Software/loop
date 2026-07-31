@@ -28,6 +28,15 @@
   DONE: processed=<n> regressed=<n> too_young=<n> ok=<n>
 """
 import argparse, json, os, subprocess, sys, datetime, pathlib, tempfile
+import base64
+from collections import defaultdict
+
+# loop pin 解析器（R13-6 #2 三方共用）。作为脚本直接运行时 conductor 不在 sys.path，
+# 回退到同目录导入。
+try:
+    from conductor import loop_pin as lp
+except ImportError:  # pragma: no cover - 脚本直跑路径
+    import loop_pin as lp
 
 E = os.environ
 
@@ -204,6 +213,286 @@ def pin_back(upstream_path, pkg_name, old_pin):
     p.write_text("\n".join(out) + "\n")
 
 
+# ── loop 控制面 bump PR（R13-6 #3/#4/#5）──────────────────────
+def is_loop_control_plane(item):
+    """识别 loop 控制面条目（seam=control-plane, kind=workflow）。"""
+    return item.get("seam") == "control-plane" and item.get("kind") == "workflow"
+
+
+def load_products_yml(path="products.yml"):
+    """读 products.yml 返回 enabled 产品仓列表 [{name, repo, default_branch, ...}]。
+    失败 → 返回空列表（dry-run 友好，不抛异常）。"""
+    try:
+        import yaml
+    except ImportError:
+        return []
+    p = pathlib.Path(path)
+    if not p.exists():
+        return []
+    try:
+        data = yaml.safe_load(p.read_text()) or {}
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    out = []
+    for pr in data.get("products", []) or []:
+        if not isinstance(pr, dict):
+            continue
+        if pr.get("enabled", True) is False:
+            continue
+        out.append(pr)
+    return out
+
+
+def _strip_quotes(v):
+    v = str(v)
+    if len(v) >= 2 and v[0] in '"\'' and v[-1] == v[0]:
+        return v[1:-1]
+    return v
+
+
+def _apply_file_change(content, file_entry):
+    """对单个文件内容应用一条变更（来自 lp.suggest_bump 的 files 条目），返回新内容。
+    纯函数，可单测。支持 LOOP.yml（loop.version/loop.sha）、UPSTREAM.yaml（pin）、
+    三个薄壳 workflow（@<old_sha> → @<new_sha>）。"""
+    path = file_entry.get("path", "")
+    trailing_nl = content.endswith("\n")
+    lines = content.splitlines()
+
+    if path == "LOOP.yml":
+        field = file_entry.get("field", "")
+        new_val = _strip_quotes(file_entry.get("new", ""))
+        out = []
+        in_loop = False
+        for ln in lines:
+            s = ln.strip()
+            indent = ln[:len(ln) - len(ln.lstrip())]
+            is_top = (indent == "" and s and not s.startswith("#"))
+            if is_top:
+                in_loop = s.startswith("loop:")
+            if in_loop and field == "loop.version" and s.startswith("version:"):
+                out.append(f'{indent}version: "{new_val}"')
+                continue
+            if in_loop and field == "loop.sha" and s.startswith("sha:"):
+                out.append(f'{indent}sha: "{new_val}"')
+                continue
+            out.append(ln)
+        return "\n".join(out) + ("\n" if trailing_nl else "")
+
+    if path == "UPSTREAM.yaml":
+        new_val = file_entry.get("new", "")
+        out = []
+        in_item = False
+        for ln in lines:
+            s = ln.strip()
+            if s.startswith("- name:"):
+                in_item = (s == "- name: Cloudbird-Software/loop")
+                out.append(ln)
+                continue
+            if in_item and s.startswith("pin:"):
+                indent = ln[:len(ln) - len(ln.lstrip())]
+                out.append(f'{indent}pin: "{new_val}"')
+                continue
+            out.append(ln)
+        return "\n".join(out) + ("\n" if trailing_nl else "")
+
+    if path.startswith(".github/workflows/loop-"):
+        old_sha = file_entry.get("old_sha", "")
+        new_sha = file_entry.get("new_sha", "")
+        if old_sha and new_sha:
+            return content.replace(f"@{old_sha}", f"@{new_sha}")
+        return content
+
+    return content
+
+
+def _put_file_change(product_repo, branch, file_entries, env):
+    """读取产品仓 branch 上某文件当前内容，应用 file_entries（同一 path 的多条变更），
+    通过 Contents API PUT 回去。失败抛 RuntimeError。"""
+    path = file_entries[0].get("path", "")
+    r = subprocess.run(
+        ["gh", "api", f"/repos/{product_repo}/contents/{path}?ref={branch}"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api get file {path} failed: {r.stderr.strip()[:200]}")
+    try:
+        meta = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        raise RuntimeError(f"gh api get file {path}: bad JSON")
+    content_b64 = meta.get("content", "")
+    file_sha = meta.get("sha", "")
+    try:
+        content = base64.b64decode(content_b64).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"decode file {path} failed: {e}")
+    for fe in file_entries:
+        content = _apply_file_change(content, fe)
+    new_b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    msg = f"loop-bump: update {path}"
+    r = subprocess.run(
+        ["gh", "api", "-X", "PUT", f"/repos/{product_repo}/contents/{path}",
+         "-f", f"message={msg}", "-f", f"content={new_b64}",
+         "-f", f"branch={branch}", "-f", f"sha={file_sha}"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api put file {path} failed: {r.stderr.strip()[:200]}")
+
+
+def bump_loop_pin(args, item, new_tag, new_sha, current_pin, product_repo, default_branch="main"):
+    """为一个产品仓开 loop bump PR。
+    - 用 lp.suggest_bump 生成变更集（覆盖 LOOP.yml / UPSTREAM.yaml / 三薄壳 workflow）。
+    - dry-run：只打印将改的文件清单，不改文件、不开 PR。
+    - 生产：用 gh CLI 建分支 → 逐个 PUT 文件内容（不在本地落盘）→ gh pr create。
+      PR 标题 `[loop-bump] <new_tag> @<new_sha[:12]>`，body 说明三者 SHA 一致、豁免数 0。
+    - 失败（gh 调用失败）→ 抛 RuntimeError，由上层 main() 捕获并开 Incident。
+    """
+    changeset = lp.suggest_bump(current_pin, {"name": new_tag, "commit": {"sha": new_sha}})
+    short_sha = (new_sha or "")[:12]
+    pr_title = f"[loop-bump] {new_tag} @{short_sha}"
+    pr_body = (
+        f"loop 控制面 pin 升级：{current_pin.get('version', '')} -> {new_tag}\n\n"
+        f"本 PR 由升级环在冷静期届满后自动开出（seam=control-plane, kind=workflow）。\n"
+        f"同步更新：\n"
+        f"  - LOOP.yml 的 loop.version / loop.sha\n"
+        f"  - UPSTREAM.yaml 的 Cloudbird-Software/loop 条目 pin\n"
+        f"  - 三个薄壳 workflow（loop-ci.yml / loop-gates.yml / loop-review.yml）的 @<sha>\n"
+        f"三者 SHA 一致：{new_sha}\n\n"
+        f"门禁：走与普通 PR 完全相同的门禁，豁免数为 0（不因来自 loop 享受任何豁免）。\n"
+    )
+    if getattr(args, "dry_run", False):
+        print(f"[dry-run] bump_loop_pin: {product_repo} branch=loop-bump/{new_tag} <- {default_branch}")
+        print(f"[dry-run]   title: {pr_title}")
+        for f in changeset.get("files", []):
+            print(f"[dry-run]   file: {f.get('path')}")
+        print(f"[dry-run]   (no file changes, no PR created)")
+        return None
+
+    env = dict(os.environ)
+    branch = f"loop-bump/{new_tag}"
+    # 1. 取 default branch 的 sha
+    r = subprocess.run(
+        ["gh", "api", f"/repos/{product_repo}/branches/{default_branch}", "-q", ".commit.sha"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api get {default_branch} sha failed: {r.stderr.strip()[:200]}")
+    base_sha = r.stdout.strip()
+    # 2. 建分支
+    r = subprocess.run(
+        ["gh", "api", f"/repos/{product_repo}/git/refs", "-X", "POST",
+         "-f", f"ref=refs/heads/{branch}", "-f", f"sha={base_sha}"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api create branch failed: {r.stderr.strip()[:200]}")
+    # 3. 逐个文件 PUT（同 path 的多条变更合并为一次 GET+PUT）
+    by_path = defaultdict(list)
+    for f in changeset.get("files", []):
+        by_path[f.get("path", "")].append(f)
+    for _path, entries in by_path.items():
+        _put_file_change(product_repo, branch, entries, env)
+    # 4. 开 PR
+    r = subprocess.run(
+        ["gh", "pr", "create", "--repo", product_repo,
+         "--base", default_branch, "--head", branch,
+         "--title", pr_title, "--body", pr_body],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh pr create failed: {r.stderr.strip()[:200]}")
+    pr_url = r.stdout.strip()
+    print(f"LOOP_BUMP_PR: {product_repo} {pr_title} -> {pr_url}")
+    return pr_url
+
+
+def open_rollback_pr(args, product_repo, default_branch, old_pin_sha, old_tag,
+                     failed_tag, failed_sha, reason):
+    """开回退 PR：把 LOOP.yml/UPSTREAM.yaml/三薄壳 workflow 的 SHA 改回 old_pin_sha。
+    - PR 标题 `[loop-rollback] revert <failed_tag> -> <old_tag>`，body 说明回退原因 + Incident 引用。
+    - dry-run 下只打印。
+    - 失败抛 RuntimeError。
+    完整"合并后回退检测"由独立的定时任务负责；本函数提供能力（验收 #5）。"""
+    short_failed = (failed_sha or "")[:12]
+    short_old = (old_pin_sha or "")[:12]
+    pr_title = f"[loop-rollback] revert {failed_tag} -> {old_tag}"
+    pr_body = (
+        f"loop 控制面 pin 回退：{failed_tag} @{short_failed} -> {old_tag} @{short_old}\n\n"
+        f"回退原因：{reason}\n\n"
+        f"本 PR 由合并后回退检测自动开出：bump 合并后首个周期出现门禁性失败，恢复上一个 pin。"
+        f"同步更新 LOOP.yml/UPSTREAM.yaml/三薄壳 workflow 的 SHA，三者一致回到 {old_pin_sha}。\n"
+        f"已开 Incident 引用本回退原因；走与普通 PR 完全相同的门禁，豁免数为 0。\n"
+    )
+    if getattr(args, "dry_run", False):
+        print(f"[dry-run] open_rollback_pr: {product_repo} branch=loop-rollback/{failed_tag} <- {default_branch}")
+        print(f"[dry-run]   title: {pr_title}")
+        print(f"[dry-run]   files: LOOP.yml, UPSTREAM.yaml, .github/workflows/loop-ci.yml, loop-gates.yml, loop-review.yml")
+        print(f"[dry-run]   (no file changes, no PR created)")
+        return None
+
+    env = dict(os.environ)
+    branch = f"loop-rollback/{failed_tag}"
+    r = subprocess.run(
+        ["gh", "api", f"/repos/{product_repo}/branches/{default_branch}", "-q", ".commit.sha"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api get {default_branch} sha failed: {r.stderr.strip()[:200]}")
+    base_sha = r.stdout.strip()
+    r = subprocess.run(
+        ["gh", "api", f"/repos/{product_repo}/git/refs", "-X", "POST",
+         "-f", f"ref=refs/heads/{branch}", "-f", f"sha={base_sha}"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh api create branch failed: {r.stderr.strip()[:200]}")
+    # 回退 = 把 failed pin 当 current、old pin 当 new 的 bump
+    rollback_changeset = lp.suggest_bump(
+        {"version": failed_tag, "sha": failed_sha},
+        {"name": old_tag, "commit": {"sha": old_pin_sha}})
+    by_path = defaultdict(list)
+    for f in rollback_changeset.get("files", []):
+        by_path[f.get("path", "")].append(f)
+    for _path, entries in by_path.items():
+        _put_file_change(product_repo, branch, entries, env)
+    r = subprocess.run(
+        ["gh", "pr", "create", "--repo", product_repo,
+         "--base", default_branch, "--head", branch,
+         "--title", pr_title, "--body", pr_body],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        raise RuntimeError(f"gh pr create failed: {r.stderr.strip()[:200]}")
+    pr_url = r.stdout.strip()
+    print(f"LOOP_ROLLBACK_PR: {product_repo} {pr_title} -> {pr_url}")
+    return pr_url
+
+
+def _open_incident(args, product_repo, title, body):
+    """开 Incident（gh issue create）。dry-run 下只打印。失败不抛（只警告）。"""
+    if getattr(args, "dry_run", False):
+        print(f"[dry-run] INCIDENT: {product_repo} — {title}")
+        return None
+    env = dict(os.environ)
+    r = subprocess.run(
+        ["gh", "issue", "create", "--repo", product_repo,
+         "--title", title, "--body", body, "--label", "loop-bump-alert"],
+        capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        print(f"WARN: gh issue create failed in {product_repo}: {r.stderr.strip()[:200]}", file=sys.stderr)
+        return None
+    url = r.stdout.strip()
+    print(f"INCIDENT: {product_repo} {title} -> {url}")
+    return url
+
+
+def _resolve_loop_new_sha(args, rel, loop_repo):
+    """从 release feed 候选解析新 tag 的 commit SHA。
+    生产：lp.fetch_loop_tags 找匹配 tag 的 sha。
+    dry-run：不拉网络，用占位 SHA（或 feed 自带 sha）。"""
+    if getattr(args, "dry_run", False):
+        return (rel.get("commit") or {}).get("sha", "") or rel.get("sha", "") or "0" * 40
+    new_tag = rel.get("version") or rel.get("tag") or ""
+    for t in lp.fetch_loop_tags(repo=loop_repo):
+        if t.get("name") == new_tag:
+            return (t.get("commit") or {}).get("sha", "")
+    return ""
+
+
 def main():
     ap = argparse.ArgumentParser(description="第 8 环升级环")
     ap.add_argument("--dry-run", action="store_true", help="空跑：不拉网络、不改文件、不开 PR")
@@ -261,6 +550,63 @@ def main():
             tier = "critical"
         if tier == "critical":
             print(f"  tier=critical (seam={it.get('seam')}; touches gate/checker path)")
+
+        # ── loop 控制面专属：开 bump PR（R13-6 #3/#4/#5）──
+        if is_loop_control_plane(it):
+            loop_repo = name  # name == "Cloudbird-Software/loop"
+            # 当前 loop pin：优先 lp.parse_upstream_loop（产品仓 UPSTREAM.yaml），
+            # 回退 item["pin"]（loop 仓自己的 UPSTREAM.yaml 无 loop 条目）。
+            up_loop = lp.parse_upstream_loop(args.upstream)
+            pin_str = (up_loop or {}).get("pin") or it.get("pin", "")
+            if "@" in pin_str:
+                cur_tag, cur_sha = pin_str.rsplit("@", 1)
+            else:
+                cur_tag, cur_sha = "", pin_str
+            loop_current_pin = {"version": cur_tag, "sha": cur_sha}
+            new_tag_loop = rel.get("version") or rel.get("tag") or ""
+            new_sha_loop = _resolve_loop_new_sha(args, rel, loop_repo)
+            products = load_products_yml()
+            if not products:
+                print(f"SKIP: {name} no enabled products in products.yml")
+                continue
+            # bench 重放一次（产品无关）；每个产品仓各自 compare + 决策（验收 #4）
+            simulated_loop = rel.get("simulated_after") if args.dry_run else None
+            after_loop = run_replay_after(args, simulated_after=simulated_loop)
+            print(f"REPLAY: {name} cards={after_loop.get('replayed_cards',0)}")
+            regressed_loop, table_loop = compare_with_baseline(args, after_loop)
+            metric_detail = ""
+            if regressed_loop:
+                for ln in table_loop.splitlines():
+                    b = ln.strip()
+                    if b.startswith("REGRESSED:"):
+                        metric_detail = b[len("REGRESSED:"):].strip()
+                        break
+                print(f"REGRESSED: loop {metric_detail}")
+            for prod in products:
+                prod_repo = prod.get("repo", "")
+                prod_branch = prod.get("default_branch", "main")
+                if not prod_repo:
+                    continue
+                if regressed_loop:
+                    # 劣化 → 不开 bump PR，开 Incident（验收 #4）
+                    _open_incident(args, prod_repo,
+                        f"[loop-bump] regression on {new_tag_loop}",
+                        f"loop bump to {new_tag_loop} @{new_sha_loop[:12]} regressed bench "
+                        f"({metric_detail}); no bump PR opened.")
+                    n_regressed += 1
+                    continue
+                try:
+                    bump_loop_pin(args, it, new_tag_loop, new_sha_loop,
+                                  loop_current_pin, prod_repo, prod_branch)
+                    print(f"ROLLBACK_WATCH: loop {new_tag_loop} merged, watching next cycle for gate failures")
+                    n_ok += 1
+                except RuntimeError as e:
+                    # bump 失败 → 开 Incident（pin_back 语义不适用 loop）
+                    _open_incident(args, prod_repo,
+                        f"[loop-bump] failed to open bump PR for {new_tag_loop}",
+                        f"bump_loop_pin raised: {e}")
+                    n_regressed += 1
+            continue  # loop 不走通用 pin_back（pin 在产品仓侧）
 
         # 重放 N 张卡得四指标
         simulated = rel.get("simulated_after") if args.dry_run else None

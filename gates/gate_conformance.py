@@ -12,6 +12,11 @@ import re
 import subprocess
 import sys
 
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from conductor import loop_pin as lp
+
 LOOP_REPO_DEFAULT = "Cloudbird-Software/loop"
 HEX40 = re.compile(r"^[0-9a-fA-F]{40}$")
 # 匹配 `uses: <owner>/<repo>/.github/workflows/<name>.yml@<ref>`
@@ -63,14 +68,17 @@ def gh_api(endpoint):
 
 def _loop_pin(product_dir):
     """读 LOOP.yml 的 loop 段，返回 (data, loop_dict, sha, version)。"""
-    loop_yml = os.path.join(product_dir, "LOOP.yml")
-    data = load_yaml(loop_yml)
-    loop = data.get("loop", {}) if isinstance(data, dict) else {}
-    if not isinstance(loop, dict):
-        loop = {}
-    sha = str(loop.get("sha", "")).strip()
-    version = str(loop.get("version", "")).strip()
-    return data, loop, sha, version
+    pin = lp.parse_loop_yml(os.path.join(product_dir, "LOOP.yml"))
+    sha = pin["sha"].strip()
+    version = pin["version"].strip()
+    loop = {
+        "repo": pin["repo"],
+        "version": version,
+        "sha": sha,
+        "max_lag_tags": pin["max_lag_tags"],
+        "max_lag_days": pin["max_lag_days"],
+    }
+    return {}, loop, sha, version
 
 
 # ── 检查 1：pin 存在且合法 ──────────────────────────────────
