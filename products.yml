@@ -44,3 +44,8 @@ sync:
   # 不因为"来自 loop"而享受任何豁免。
   open_pr_only: true
   pr_label: loop-sync
+  # 同一仓库只保留一张开着的 template-sync PR（幂等 / R13-5 验收 #4）。
+  # template-sync workflow 的 fan-out 脚本据此探针跳过重复开 PR。
+  concurrency: one_pr_per_repo
+  # 扇出失败（含影子仓检测）时开 Incident 的标签（R13-5 验收 #5/#6）。
+  incident_label: template-sync-alert

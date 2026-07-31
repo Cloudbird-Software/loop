@@ -1,0 +1,228 @@
+name: reusable-product-ci
+# ============================================================
+# 产品仓 CI 复用工作流（R13-1）。
+#
+# 设计：
+#   - 以 workflow_call 暴露，输入参数化（语言栈 / 各工具版本 / 是否跑 lint·test·build）。
+#   - 无任何产品特定逻辑：所有命令由 language 输入选择，产品仓薄壳只做
+#     `uses: Cloudbird-Software/loop/.github/workflows/reusable-product-ci.yml@<sha>`。
+#   - 铁律（CHARTER N5）：缺失工具链必须红而非跳过。本文件不允许出现
+#     `|| true`、`set +e`、`continue-on-error: true` 等吞错模式。
+#     「无 lint script / 无 tests/ / 无 pyproject.toml」是合法的「无事可做」，
+#     以显式 if/else + 明确打印（NOLINT/NOTESTS/NOBUILD）处理，非静默吞退出码。
+#   - 不使用 `secrets: inherit`：本 workflow 无需任何 secret，调用方无需传 secret。
+#   - 所有 actions/* 钉 40 位 SHA + 行尾版本注释（CHARTER N4）。
+# ============================================================
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: "语言栈：python | node | go"
+        required: false
+        type: string
+        default: "python"
+      python-version:
+        description: "Python 版本（language=python 时生效）"
+        required: false
+        type: string
+        default: "3.11"
+      node-version:
+        description: "Node 版本（language=node 时生效）"
+        required: false
+        type: string
+        default: "20"
+      go-version:
+        description: "Go 版本（language=go 时生效）"
+        required: false
+        type: string
+        default: "1.22"
+      run-lint:
+        description: "是否执行 lint job"
+        required: false
+        type: boolean
+        default: true
+      run-test:
+        description: "是否执行 test job"
+        required: false
+        type: boolean
+        default: true
+      run-build:
+        description: "是否执行 build job"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # ============================================================
+  # lint —— 按 language 选择 linter。工具链缺失即红。
+  # ============================================================
+  lint:
+    if: ${{ inputs.run-lint == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        if: inputs.language == 'python'
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+        if: inputs.language == 'node'
+        with:
+          node-version: ${{ inputs.node-version }}
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+        if: inputs.language == 'go'
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Run lint
+        run: |
+          set -euo pipefail
+          LANG="${{ inputs.language }}"
+          case "$LANG" in
+            python)
+              if [ -f pyproject.toml ] || [ -f ruff.toml ]; then
+                python -m pip install --upgrade ruff
+                ruff check .
+              else
+                # 无 ruff 配置 → 回退到 py_compile 全量语法自检。
+                find . -name '*.py' -not -path './.git/*' -not -path './node_modules/*' -print0 \
+                  | xargs -0 -r -n1 python -m py_compile
+                echo "py_compile OK（未发现 ruff 配置，回退到 py_compile）"
+              fi
+              ;;
+            node)
+              if [ -f package.json ]; then
+                HAS_LINT=$(node -e "try{const p=require('./package.json');process.stdout.write(p.scripts&&p.scripts.lint?'yes':'no')}catch(e){process.stdout.write('no')}")
+                if [ "$HAS_LINT" = "yes" ]; then
+                  npm run lint
+                else
+                  echo "NOLINT: package.json 无 lint script（job 仍 PASS）"
+                fi
+              else
+                echo "NOLINT: 无 package.json（job 仍 PASS）"
+              fi
+              ;;
+            go)
+              FMT_ISSUES=$(gofmt -l .)
+              if [ -n "$FMT_ISSUES" ]; then
+                echo "::error::gofmt 发现需要格式化的文件:"
+                echo "$FMT_ISSUES"
+                exit 1
+              fi
+              go vet ./...
+              ;;
+            *)
+              echo "::error::未知 language: $LANG（仅支持 python/node/go）"
+              exit 1
+              ;;
+          esac
+
+  # ============================================================
+  # test —— 按 language 选择测试命令。
+  # ============================================================
+  test:
+    if: ${{ inputs.run-test == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        if: inputs.language == 'python'
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+        if: inputs.language == 'node'
+        with:
+          node-version: ${{ inputs.node-version }}
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+        if: inputs.language == 'go'
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Run test
+        run: |
+          set -euo pipefail
+          LANG="${{ inputs.language }}"
+          case "$LANG" in
+            python)
+              python -m pip install --upgrade pytest
+              if [ -d tests ]; then
+                python -m pytest -q
+              else
+                echo "NOTESTS: 无 tests/ 目录（job 仍 PASS）"
+              fi
+              ;;
+            node)
+              if [ -f package.json ]; then
+                npm test --if-present
+              else
+                echo "NOTESTS: 无 package.json（job 仍 PASS）"
+              fi
+              ;;
+            go)
+              go test ./...
+              ;;
+            *)
+              echo "::error::未知 language: $LANG（仅支持 python/node/go）"
+              exit 1
+              ;;
+          esac
+
+  # ============================================================
+  # build —— 按 language 选择构建命令。
+  # ============================================================
+  build:
+    if: ${{ inputs.run-build == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        if: inputs.language == 'python'
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+        if: inputs.language == 'node'
+        with:
+          node-version: ${{ inputs.node-version }}
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f7220b18b23271 # v5.0.0
+        if: inputs.language == 'go'
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Run build
+        run: |
+          set -euo pipefail
+          LANG="${{ inputs.language }}"
+          case "$LANG" in
+            python)
+              if [ -f pyproject.toml ]; then
+                python -m pip install --upgrade build
+                python -m build
+              else
+                echo "NOBUILD: 无 pyproject.toml（job 仍 PASS）"
+              fi
+              ;;
+            node)
+              if [ -f package.json ]; then
+                npm run build --if-present
+              else
+                echo "NOBUILD: 无 package.json（job 仍 PASS）"
+              fi
+              ;;
+            go)
+              go build ./...
+              ;;
+            *)
+              echo "::error::未知 language: $LANG（仅支持 python/node/go）"
+              exit 1
+              ;;
+          esac

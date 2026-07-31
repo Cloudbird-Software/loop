@@ -82,3 +82,15 @@ gates:
       - verdict
       - lockdiff
       - heterogeneity
+    strict:                      # 产品仓全集（含 conformance；LOOP.yml gates.profile: strict）
+      - charter
+      - diffsize
+      - license
+      - minage
+      - paths
+      - testown
+      - upstream
+      - verdict
+      - lockdiff
+      - heterogeneity
+      - conformance
