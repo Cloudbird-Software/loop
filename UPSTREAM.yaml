@@ -138,6 +138,33 @@ items:
     degrade_path: "退回 actions/setup-python@v4 或手写 pyenv 装步骤，丢失 cache / token 透传"
     note: "R11-1 补登：所有 workflow 的 Python 环境安装步骤引用；pin 为 tag，sha256 字段记录所钉 commit SHA。"
 
+  - name: actions/setup-node
+    seam: gate
+    kind: action
+    pin: "v4.1.1"
+    sha256: "39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d"   # commit SHA
+    license: MIT
+    degrade_path: "退回 actions/setup-node@v3 或手写 nvm 装步骤，丢失 cache"
+    note: "R13-1 补登：reusable-product-ci.yml / reusable-review.yml 的 Node 环境安装步骤引用。"
+
+  - name: actions/setup-go
+    seam: gate
+    kind: action
+    pin: "v5.0.0"
+    sha256: "0a12ed9d6a96ab950c8f026ed9f7220b18b23271"   # commit SHA
+    license: MIT
+    degrade_path: "退回 actions/setup-go@v4 或手写 goenv 装步骤，丢失 cache"
+    note: "R13-1 补登：reusable-product-ci.yml 的 Go 环境安装步骤引用。"
+
+  - name: actions/create-github-app-token
+    seam: gate
+    kind: action
+    pin: "v1.10.0"
+    sha256: "a0e3cb0a8efd59b6e0c10e6c3d3f175ec104e6a7"   # commit SHA
+    license: MIT
+    degrade_path: "退回手写 App token 生成（gh api /app/installations + jwt），丢失自动续期"
+    note: "R13-5 补登：template-sync.yml 的跨仓 App token 生成步骤引用。"
+
   # ── B 执行体配套（bootstrap 装的 CLI，loopd 依赖） ──
   - name: cli/cli
     seam: B
