@@ -1,0 +1,358 @@
+name: reusable-review
+# ============================================================
+# 产品仓强模型验收复用工作流（R13-1，封装 WAVE-12 评审环）。
+#
+# ★为什么本 workflow 默认 required: false（CHARTER N9.7）：
+#   强模型验收的产物只是「待检验的输入」，不是事实。模型不确定性不得卡合并线——
+#   能卡合并的只有确定性 gate，以及被复现确认后固化出来的 checker。
+#   非阻塞 ≠ 允许假绿（CHARTER N5）：本 workflow 自身失败（校验不过、执行体崩溃、
+#   缺凭证导致的硬错误）必须红，只是不挡 merge。
+#
+# 设计：
+#   - 以 workflow_call 暴露，输入参数化（head-sha / card-id / required / loop-sha / loop-repo）。
+#   - 产品仓不持有 conductor/ 与 prompts/ 副本（CHARTER N9）——先 checkout 产品仓，
+#     再 checkout loop 仓到 .loop-control/，从 .loop-control/ 取 ROUTING.yaml /
+#     UPSTREAM.yaml / policy.yml / prompts/ / conductor/，评审对象是产品仓本身。
+#   - 较薄封装：解析路由 → 预算护栏 → 运行 copilot-cli → wrap claims →
+#     调 .loop-control/conductor/claims.py validate（校验逻辑不重写，复用 loop 侧实现）。
+#   - provider/model/seam_b 全部从 .loop-control/ROUTING.yaml 解析，不硬编码进 workflow。
+#   - 不使用 `secrets: inherit`：GH_TOKEN、COPILOT_GITHUB_TOKEN 在 workflow_call 级别声明，
+#     由调用方显式传入。COPILOT_GITHUB_TOKEN 未配置时显式跳过（非静默、非失败）。
+#   - 所有 actions/* 钉 40 位 SHA + 行尾版本注释（CHARTER N4）。
+#   - 铁律（CHARTER N5）：本文件不允许 `|| true`、`set +e`、`continue-on-error: true`。
+# ============================================================
+on:
+  workflow_call:
+    inputs:
+      head-sha:
+        description: "评审绑定的 commit SHA（空 = 取当前 ref tip）"
+        required: false
+        type: string
+        default: ""
+      card-id:
+        description: "限定评审范围的工作卡 id（可空）"
+        required: false
+        type: string
+        default: ""
+      required:
+        description: "是否为 required check（默认 false，CHARTER N9.7：模型不确定性不卡合并线）"
+        required: false
+        type: boolean
+        default: false
+      loop-sha:
+        description: "loop 仓 40 位 commit SHA，用于 checkout conductor/ 与 prompts/"
+        required: true
+        type: string
+      loop-repo:
+        description: "loop 仓坐标（owner/repo）"
+        required: false
+        type: string
+        default: "Cloudbird-Software/loop"
+    secrets:
+      GH_TOKEN:
+        description: "调用方仓的 GitHub token（预算护栏枚举今日 review 运行数）"
+        required: true
+      COPILOT_GITHUB_TOKEN:
+        description: "Copilot CLI 鉴权 token（未配置时显式跳过评审，非失败）"
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read   # 仅预算护栏用：枚举今日 review 运行数（只读）；contents:write 仍被拒绝
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+    steps:
+      - name: Declare review policy (required flag)
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.required }}" = "true" ]; then
+            echo "::notice::本评审被声明为 required check（required=true）。注意 CHARTER N9.7 默认要求 required=false——模型不确定性不得卡合并线。"
+          else
+            echo "::notice::本评审为非阻塞 check（required=false，CHARTER N9.7）：产物是待检验的输入，不卡合并线。"
+          fi
+
+      # 1. checkout 产品仓（评审需在 head_sha 上跑只读 repro 命令，取全历史）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.head-sha || github.sha }}
+      # 2. checkout loop 仓到 .loop-control/（取 conductor/ 与 prompts/，产品仓不持有副本）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.loop-repo }}
+          ref: ${{ inputs.loop-sha }}
+          path: .loop-control
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip PyYAML --quiet
+
+      # ============================================================
+      # 解析 ROUTING.yaml / UPSTREAM.yaml / policy.yml —— 从 loop 侧 checkout 取，
+      # 不硬编码 copilot。review/accept 路由的 seam_b/provider/model 与 copilot pin 全部数据驱动。
+      # ============================================================
+      - name: Parse routing + upstream + policy
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import yaml, os, sys
+          def load(p):
+              with open(p, encoding="utf-8") as f:
+                  return yaml.safe_load(f) or {}
+          routing = load(".loop-control/ROUTING.yaml")
+          upstream = load(".loop-control/UPSTREAM.yaml")
+          policy = load(".loop-control/policy.yml")
+
+          route = None
+          for r in routing.get("routes", []):
+              if r.get("domain") == "review" and r.get("action") == "accept":
+                  route = r
+                  break
+          if route is None:
+              print("::error::ROUTING.yaml 未登记 review/accept 路由")
+              sys.exit(1)
+
+          seam_b = str(route.get("seam_b", "")).strip()
+          model = str(route.get("model", "")).strip()
+          provider = str(route.get("provider", "")).strip()
+          if not seam_b or not model or not provider:
+              print(f"::error::review/accept 路由缺字段: seam_b={seam_b!r} provider={provider!r} model={model!r}")
+              sys.exit(1)
+
+          copilot_pin = ""
+          for it in upstream.get("items", []):
+              if it.get("name") == "@github/copilot":
+                  copilot_pin = str(it.get("pin", "")).strip()
+                  break
+
+          review = policy.get("review", {}) if isinstance(policy.get("review"), dict) else {}
+          max_reviews = review.get("max_reviews_per_day", 6)
+          min_conf = review.get("min_confidence", 0.6)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"SEAM_B={seam_b}\n")
+              f.write(f"REVIEW_PROVIDER={provider}\n")
+              f.write(f"REVIEWER_MODEL={model}\n")
+              f.write(f"COPILOT_PIN={copilot_pin}\n")
+              f.write(f"MAX_REVIEWS_PER_DAY={max_reviews}\n")
+              f.write(f"MIN_CONFIDENCE={min_conf}\n")
+          print(f"review/accept route: seam_b={seam_b} provider={provider} model={model}")
+          print(f"copilot_pin={copilot_pin or '(not found)'}")
+          print(f"policy.review: max_reviews_per_day={max_reviews} min_confidence={min_conf}")
+          if seam_b != "copilot-cli":
+              print(f"::warning::review/accept.seam_b='{seam_b}' != 'copilot-cli'；本 workflow 仅实现 copilot-cli 执行体路径。")
+          if not copilot_pin:
+              print("::error::UPSTREAM.yaml 未登记 @github/copilot 的 pin；拒绝以未钉版本运行（UPSTREAM 铁律）。")
+              sys.exit(1)
+          PY
+
+      # ============================================================
+      # 凭证就位检查 —— token 未开通时显式跳过（非静默），不红spam 每个 PR。
+      # 这是「未接入」而非「评审失败」。
+      # ============================================================
+      - name: Onboard guard (COPILOT_GITHUB_TOKEN)
+        id: onboard
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "REVIEWER_NOT_ONBOARDED: COPILOT_GITHUB_TOKEN 未配置为 repo secret；跳过本次评审（非阻塞、非失败）。"
+            echo "should_skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "COPILOT_GITHUB_TOKEN 已配置，继续。"
+            echo "should_skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ============================================================
+      # 预算护栏（policy.review.max_reviews_per_day）。
+      # 枚举今日完成的 review 运行数（按 workflowName 含 "review" 过滤，产品仓薄壳名不固定）。
+      # 超限 → BUDGET_EXCEEDED 跳过（非静默）；gh 调用失败 → BUDGET_CHECK_UNAVAILABLE 放行。
+      # ============================================================
+      - name: Budget guardrail
+        id: budget
+        if: success() && steps.onboard.outputs.should_skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          TODAY=$(date -u +%Y-%m-%d)
+          COUNT=$( (gh run list -L 100 --json createdAt,conclusion,workflowName 2>/tmp/gh_err | python3 -c '
+              import json, sys
+              today = "'"$TODAY"'"
+              try:
+                  runs = json.load(sys.stdin)
+              except Exception:
+                  print("UNAVAILABLE"); sys.exit(0)
+              if not isinstance(runs, list):
+                  print("UNAVAILABLE"); sys.exit(0)
+              n = 0
+              for r in runs:
+                  ca = r.get("createdAt", "") or ""
+                  co = r.get("conclusion", "") or ""
+                  wn = (r.get("workflowName", "") or "").lower()
+                  if ca.startswith(today) and co in ("success", "failure") and "review" in wn:
+                      n += 1
+              print(n)
+          ') || echo "UNAVAILABLE" )
+          if [ "$COUNT" = "UNAVAILABLE" ]; then
+            echo "BUDGET_CHECK_UNAVAILABLE: 无法枚举今日 review 运行数（gh 调用失败）；放行本次评审。stderr:"
+            cat /tmp/gh_err >&2
+            echo "should_skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "$COUNT" -ge "$MAX_REVIEWS_PER_DAY" ]; then
+            echo "BUDGET_EXCEEDED: 今日已完成 $COUNT 次 review >= max_reviews_per_day($MAX_REVIEWS_PER_DAY)；跳过（非静默）。"
+            echo "should_skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "BUDGET_OK: 今日 $COUNT 次 review < 配额 $MAX_REVIEWS_PER_DAY；继续。"
+            echo "should_skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ============================================================
+      # 运行评审执行体（seam_b=copilot-cli），headless + 只读工具面。
+      # 提示词 = .loop-control/prompts/P11.md + workflow 注入的评审输入。
+      # reviewer 只产 JSON 数组；信封字段由下一步 wrap 注入。
+      # ============================================================
+      - name: Run reviewer (copilot-cli headless, read-only)
+        id: run
+        if: success() && steps.onboard.outputs.should_skip != 'true' && steps.budget.outputs.should_skip != 'true'
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          HEAD_SHA: ${{ inputs.head-sha || github.sha }}
+          CARD_ID: ${{ inputs.card-id }}
+        run: |
+          set -euo pipefail
+          if [ "$SEAM_B" != "copilot-cli" ]; then
+            echo "::error::seam_b='$SEAM_B' 在本 workflow 无执行体路径（仅 copilot-cli）；请扩展本 workflow 或修正 ROUTING.yaml。"
+            exit 1
+          fi
+          npm install -g "@github/copilot@$COPILOT_PIN" --silent
+          mkdir -p .loop/review
+          {
+            cat .loop-control/prompts/P11.md
+            echo
+            echo "---"
+            echo "## 本次评审输入（由 workflow 注入，非你决定）"
+            echo "- head_sha: $HEAD_SHA"
+            echo "- reviewer_model (ROUTING.yaml review/accept): $REVIEWER_MODEL"
+            echo "- provider (ROUTING.yaml review/accept): $REVIEW_PROVIDER"
+            echo "- seam_b (执行体): $SEAM_B"
+            echo "- card_id: ${CARD_ID:-(未指定)}"
+            echo "- min_confidence (policy.review.min_confidence): $MIN_CONFIDENCE"
+            echo "- 仓库: ${{ github.repository }}"
+            echo
+            echo "现在按上述契约，只输出一个 JSON 数组。"
+          } > /tmp/review_prompt.md
+          copilot -p "$(cat /tmp/review_prompt.md)" --no-tty \
+            --allow-tool "shell(git show:*,git log:*,git diff:*,git status:*,cat:*,ls:*,find:*,grep:*,head:*,tail:*,wc:*,file:*,python3:*)" \
+            --deny-tool "shell(rm:*,mv:*,cp:*,git push:*,git commit:*,git checkout:*,git reset:*,git clean:*,git merge:*,git rebase:*,npm:*,npx:*,pip:*,curl:*,wget:*,chmod:*,chown:*,mkdir:*,touch:*,>:*,>>:*)" \
+            > .loop/review/claims_raw.txt
+          echo "=== copilot 原始输出（前 40 行）==="
+          head -n 40 .loop/review/claims_raw.txt
+          echo "=== 输出字节数 ==="
+          wc -c .loop/review/claims_raw.txt
+
+      # ============================================================
+      # Wrap：把 reviewer 产出的 JSON 数组包成符合 claim.json 顶层结构的文档。
+      # 信封字段在此注入，使 conductor/claims.py validate 可校验完整文档。
+      # ============================================================
+      - name: Wrap into claim document
+        if: success() && steps.onboard.outputs.should_skip != 'true' && steps.budget.outputs.should_skip != 'true'
+        env:
+          HEAD_SHA: ${{ inputs.head-sha || github.sha }}
+          CARD_ID: ${{ inputs.card-id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, sys, datetime
+          raw = open(".loop/review/claims_raw.txt", encoding="utf-8").read()
+          m = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", raw, re.S)
+          if m:
+              arr_str = m.group(1)
+          else:
+              lo = raw.find("[")
+              hi = raw.rfind("]")
+              if lo == -1 or hi == -1 or hi < lo:
+                  print("::error::copilot 输出中找不到 JSON 数组（无 [ ... ]）")
+                  print("=== 原始输出（前 2000 字符）===")
+                  print(raw[:2000])
+                  sys.exit(1)
+              arr_str = raw[lo:hi+1]
+          try:
+              claims = json.loads(arr_str)
+          except json.JSONDecodeError as e:
+              print(f"::error::copilot 输出不是合法 JSON: {e}")
+              print("=== 抽取候选（前 2000 字符）===")
+              print(arr_str[:2000])
+              sys.exit(1)
+          if not isinstance(claims, list):
+              print(f"::error::期望 JSON 数组，得到 {type(claims).__name__}")
+              sys.exit(1)
+          head_sha = os.environ["HEAD_SHA"]
+          card_id = os.environ.get("CARD_ID", "").strip()
+          repo = "${{ github.repository }}"
+          review_id = f"{repo.replace('/', '-')}-${{ github.run_id }}-${{ github.run_attempt }}"
+          scope = {"repo": repo, "head_sha": head_sha}
+          if card_id:
+              scope["card_id"] = card_id
+          doc = {
+              "schema": 1,
+              "review_id": review_id,
+              "reviewer_model": os.environ["REVIEWER_MODEL"],
+              "reviewer_seam_b": os.environ["SEAM_B"],
+              "head_sha": head_sha,
+              "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "scope": scope,
+              "claims": claims,
+          }
+          with open("/tmp/claims_candidate.json", "w", encoding="utf-8") as f:
+              json.dump(doc, f, ensure_ascii=False, indent=2)
+          print(f"候选文档已写入 /tmp/claims_candidate.json，含 {len(claims)} 条 claim")
+          PY
+
+      # ============================================================
+      # 校验：复用 loop 侧 .loop-control/conductor/claims.py validate（不重写校验逻辑）。
+      # 校验失败 → 退出码 1 → job 红（N9.7 后半句）。
+      # ============================================================
+      - name: Validate claim document
+        if: success() && steps.onboard.outputs.should_skip != 'true' && steps.budget.outputs.should_skip != 'true'
+        run: |
+          set -euo pipefail
+          python3 .loop-control/conductor/claims.py validate /tmp/claims_candidate.json
+
+      # ============================================================
+      # 落盘：校验通过后才把候选文档落到 .loop/review/（产品仓侧）。
+      # reviewer 角色无 contents:write，不 git commit；文件留 runner 供下游取用。
+      # ============================================================
+      - name: Persist validated claims
+        if: success() && steps.onboard.outputs.should_skip != 'true' && steps.budget.outputs.should_skip != 'true'
+        run: |
+          set -euo pipefail
+          REVIEW_ID=$(python3 -c "import json;print(json.load(open('/tmp/claims_candidate.json'))['review_id'])")
+          OUT=".loop/review/claims-${REVIEW_ID}.json"
+          mv /tmp/claims_candidate.json "$OUT"
+          echo "已落盘: $OUT"
+          echo "=== 摘要 ==="
+          python3 -c "
+          import json
+          d=json.load(open('$OUT'))
+          print(f\"review_id={d['review_id']} reviewer_model={d['reviewer_model']} head_sha={d['head_sha'][:12]} claims={len(d['claims'])}\")
+          for c in d['claims']:
+              print(f\"  - {c.get('id')} [{c.get('severity')}] conf={c.get('confidence')} :: {c.get('claim','')[:80]}\")
+          "
+          echo "::notice::强模型验收产物已落盘 $OUT（claim 须被异构复现确认后才可触发修复，CHARTER N9.4/N9.7）"

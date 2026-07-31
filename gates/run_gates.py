@@ -18,6 +18,7 @@
 import argparse
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import time
@@ -27,7 +28,17 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
 def load_policy(path="policy.yml"):
-    with open(path, encoding="utf-8") as f:
+    # 如果 path 不存在，尝试从 LOOP_ROOT 加载（产品仓场景：policy.yml 在 loop 侧）
+    p = pathlib.Path(path)
+    if not p.is_absolute():
+        # 先试 cwd
+        if not p.exists():
+            loop_root = os.environ.get("LOOP_ROOT", "")
+            if loop_root:
+                alt = pathlib.Path(loop_root) / path
+                if alt.exists():
+                    p = alt
+    with open(p, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -52,7 +63,7 @@ def resolve_gate(name, search_dirs):
     return None
 
 
-def run_one(name, path, timeout):
+def run_one(name, path, timeout, cwd=None):
     """执行单个 gate，返回 dict(name/status/exit_code/duration_ms/path/stderr_tail)。"""
     t0 = time.monotonic()
     if path.endswith(".py"):
@@ -61,7 +72,7 @@ def run_one(name, path, timeout):
         cmd = [path]
     try:
         p = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=REPO_ROOT,
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd or REPO_ROOT,
         )
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "error", "exit_code": None,
@@ -94,8 +105,18 @@ def main():
     ap.add_argument("--gates", help="逗号分隔 gate 名，覆盖 profile（用于局部验证）")
     ap.add_argument("--out", help="机器可读摘要 JSON 输出路径")
     ap.add_argument("--timeout", type=int, help="覆盖默认超时（秒）")
+    ap.add_argument("--root", default=None,
+                    help="目标仓根目录（产品仓场景：gate 在该目录下扫描，policy 从 LOOP_ROOT 读）")
     args = ap.parse_args()
 
+    # --root 改变 gate 的 cwd 和 search_dirs 基准
+    root = args.root or os.getcwd()
+    root = os.path.abspath(root)
+    # 产品仓场景：policy.yml 在 loop 侧（LOOP_ROOT），不在产品仓
+    if not os.path.isfile(os.path.join(root, "policy.yml")):
+        loop_root = os.environ.get("LOOP_ROOT", "")
+        if loop_root and os.path.isfile(os.path.join(loop_root, "policy.yml")):
+            os.chdir(loop_root)  # 切到 loop 侧读 policy.yml
     policy = load_policy()
     gconf = policy.get("gates", {})
     default_timeout = args.timeout or gconf.get("timeout_default", 120)
@@ -109,7 +130,7 @@ def main():
             print(f"FAIL: profile '{args.profile}' not found or empty in policy.yml")
             sys.exit(2)
 
-    search_dirs = resolve_search_dirs(policy)
+    search_dirs = resolve_search_dirs(policy, cwd=root)
     results = []
     for name in names:
         path = resolve_gate(name, search_dirs)
@@ -118,7 +139,7 @@ def main():
             results.append({"name": name, "status": "missing", "exit_code": None,
                             "duration_ms": 0, "path": None, "detail": "not found in any search_dir"})
             continue
-        r = run_one(name, path, timeouts.get(name, default_timeout))
+        r = run_one(name, path, timeouts.get(name, default_timeout), cwd=root)
         results.append(r)
         tag = {"pass": "OK", "fail": "FAIL", "error": "GATE_ERRORED",
                "missing": "GATE_NOT_EXECUTED"}[r["status"]]

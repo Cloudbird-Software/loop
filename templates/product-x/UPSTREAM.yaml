@@ -1,0 +1,25 @@
+# UPSTREAM.yaml — product-x 外部依赖登记处
+#
+# 铁律：
+# - 未登记进本文件的外部依赖 → gate/upstream 直接红
+# - 新版本必须过 policy.min_age_days 冷静期才允许自动升级
+# - 永不从非官方源安装
+#
+# 特殊条目：Cloudbird-Software/loop
+#   loop 作为控制面，通过本条目进入第 8 环升级环。
+#   loop 发新 tag → 冷静期届满 → 自动开 bump PR（只开 PR，不直推）
+#   → 跑 bench 重放 → 四指标不劣化才允许合 → 否则自动回退并开 Incident
+
+policy:
+  min_age_days: 7              # 冷静期不得为 0（R13-6 验收）
+  trigger: on_wave_open
+
+items:
+  # ── 控制面 pin（loop 自身）──────────────────────────────────
+  - name: Cloudbird-Software/loop
+    seam: control-plane          # 特殊 seam：控制面（非 A/B/C/D）
+    kind: workflow               # kind=workflow：pin 的是 reusable workflow 的 SHA
+    pin: "v0.1.5@0000000000000000000000000000000000000000"   # ← 由 upgrade 环回填
+    degrade_path: "薄壳 workflow 不可用 → 产品仓 CI 全红 → 人类介入；无降级路径（控制面不可降级）"
+    min_age_days: 7              # 覆盖 policy.min_age_days（loop 自身的冷静期）
+    note: "loop 发新 tag 后，冷静期届满时自动开 bump PR：同步更新 LOOP.yml.loop.sha、UPSTREAM.yaml 与全部薄壳 workflow 的 @<sha>，三者必须一致（由 gate/loop-conformance 检查 6 保证）"

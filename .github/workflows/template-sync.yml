@@ -1,0 +1,429 @@
+name: template-sync
+# 由 loop 仓侧运行：当 loop 侧种子文件（templates/product-x/*）演进时，
+# 按 products.yml 注册表向各产品仓以 PR 形式扇出（R13-5）。
+#
+# 铁律（CHARTER N5 / N10 / R13-5 验收 #3/#6）：
+#   - 只开 PR，绝不直推（open_pr_only 由代码强制，见脚本中 OPEN_PR_ONLY = True）。
+#   - 扇出 PR 走与普通 PR 完全相同的门禁，豁免数为 0；不因"来自 loop"享受任何豁免。
+#   - 扇出失败必须红并开 Incident（label=template-sync-alert），不得静默。
+#   - loop 对产品仓的写操作一律走 GitHub App token（CONDUCTOR_APP），不用 PAT。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"   # UTC 06:00 每天一次
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+concurrency:
+  group: template-sync
+  cancel-in-progress: false   # 不取消进行中的扇出，避免半成品 PR
+
+jobs:
+  fan-out:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with: {python-version: "3.11"}
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install PyYAML
+      - id: token
+        uses: actions/create-github-app-token@a0e3cb0a8efd59b6e0c10e6c3d3f175ec104e6a7 # v1.10.0
+        with:
+          app-id: ${{ secrets.CONDUCTOR_APP_ID }}
+          private-key: ${{ secrets.CONDUCTOR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+      - id: run-script
+        name: Run template-sync fan-out
+        env:
+          # 跨仓写产品仓（开分支/提文件/开 PR）必须用 CONDUCTOR_APP token，GITHUB_TOKEN 作用域仅限 loop 仓。
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          LOOP_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sys, json, base64, subprocess, tempfile, traceback
+
+          import yaml
+
+          # ── 铁律（R13-5 验收 #3）：open_pr_only 由代码强制，不读配置 ──
+          # 任何"直推"路径在此被结构性关闭；改成 False 即让下方 sync_repo 抛错。
+          OPEN_PR_ONLY = True
+
+          LOOP_SHA = os.environ.get("LOOP_SHA") or ""
+          GH_TOKEN = os.environ.get("GH_TOKEN") or ""
+          LOOP_REPO = os.environ.get("GITHUB_REPOSITORY") or "Cloudbird-Software/loop"
+          LOOP_ORG = LOOP_REPO.split("/")[0]
+          LOOP_SHORT_SHA = (LOOP_SHA[:12] if LOOP_SHA else "unknown")
+          PRODUCTS_FILE = "products.yml"
+          # loop 侧种子文件模板源约定目录（见 docs/产品仓对齐架构.md §2.5 / WAVE-13 R13-3）。
+          TEMPLATE_ROOT = "templates/product-x"
+
+          # 由 main() 从 products.yml 读入后覆写（仅 label 名，非行为开关）。
+          INCIDENT_LABEL = "template-sync-alert"
+          PR_LABEL = "loop-sync"
+
+          if not GH_TOKEN:
+              print("FATAL: GH_TOKEN not set", file=sys.stderr)
+              sys.exit(2)
+          if not LOOP_SHA:
+              print("FATAL: LOOP_SHA not set", file=sys.stderr)
+              sys.exit(2)
+
+
+          def gh(*args, check=True):
+              env = dict(os.environ, GH_TOKEN=GH_TOKEN)
+              p = subprocess.run(["gh", *args], env=env, text=True, capture_output=True)
+              if check and p.returncode != 0:
+                  raise RuntimeError(
+                      f"gh {' '.join(args)} failed rc={p.returncode}\n"
+                      f"stdout: {p.stdout}\nstderr: {p.stderr}"
+                  )
+              return p
+
+
+          def gh_api(method, path, fields=None, check=True):
+              args = ["api", "-X", method, path]
+              if fields:
+                  for k, v in fields.items():
+                      args += ["-f", f"{k}={v}"]
+              return gh(*args, check=check)
+
+
+          def ensure_label(repo, name, color="b60205"):
+              # 不用 `|| true`：先查再建（CHARTER N5）。
+              p = gh("label", "list", "-R", repo, "--json", "name", "--jq", ".[].name", check=False)
+              existing = (p.stdout or "").split()
+              if name in existing:
+                  return
+              gh("label", "create", name, "-R", repo, "--color", color)
+
+
+          def open_incident(title, body):
+              """在 loop 仓开 Incident（label=INCIDENT_LABEL）。幂等：同标题已开则不重复。"""
+              ensure_label(LOOP_REPO, INCIDENT_LABEL, "b60205")
+              p = gh("issue", "list", "-R", LOOP_REPO, "--state", "open",
+                     "--search", f"{title} in:title", "--json", "title", "--jq", ".[].title",
+                     check=False)
+              titles = (p.stdout or "").splitlines()
+              if title in titles:
+                  print(f"  incident already open: {title}")
+                  return
+              with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+                  f.write(body)
+                  body_path = f.name
+              p = gh("issue", "create", "-R", LOOP_REPO, "--title", title,
+                     "--label", INCIDENT_LABEL, "--body-file", body_path, check=False)
+              if p.returncode != 0:
+                  print(f"  WARN: failed to open incident: {p.stderr or p.stdout}", file=sys.stderr)
+                  return
+              print(f"  incident opened: {p.stdout.strip()}")
+
+
+          def read_loop_template(path):
+              """读 loop 侧种子模板内容（bytes）。源约定 templates/product-x/{path}，回退 ./{path}。"""
+              for c in (os.path.join(TEMPLATE_ROOT, path), path):
+                  if os.path.isfile(c):
+                      with open(c, "rb") as f:
+                          return f.read()
+              return None
+
+
+          def repo_file_info(repo, path, ref):
+              """返回产品仓 {ref} 上 {path} 的 (exists, sha, content_bytes)。404 → (False, None, None)。"""
+              p = gh_api("GET", f"repos/{repo}/contents/{path}?ref={ref}", check=False)
+              if p.returncode != 0:
+                  combined = (p.stderr or "") + (p.stdout or "")
+                  if "404" in combined or "Not Found" in combined:
+                      return (False, None, None)
+                  raise RuntimeError(f"GET contents {repo}:{path} failed: {combined}")
+              data = json.loads(p.stdout)
+              sha = data.get("sha")
+              raw = data.get("content") or ""
+              try:
+                  content = base64.b64decode(raw) if raw else b""
+              except Exception:
+                  content = b""
+              return (True, sha, content)
+
+
+          def put_repo_file(repo, path, branch, content_bytes, existing_sha):
+              b64 = base64.b64encode(content_bytes).decode("ascii")
+              fields = {
+                  "message": f"[template-sync] {path} from loop@{LOOP_SHORT_SHA}",
+                  "content": b64,
+                  "branch": branch,
+              }
+              if existing_sha:
+                  fields["sha"] = existing_sha
+              p = gh_api("PUT", f"repos/{repo}/contents/{path}", fields=fields, check=False)
+              if p.returncode != 0:
+                  raise RuntimeError(f"PUT contents {repo}:{path} failed: {p.stderr or p.stdout}")
+
+
+          def get_default_branch_sha(repo, default_branch):
+              p = gh_api("GET", f"repos/{repo}/git/refs/heads/{default_branch}", check=False)
+              if p.returncode != 0:
+                  raise RuntimeError(f"GET ref {repo}:{default_branch} failed: {p.stderr or p.stdout}")
+              return json.loads(p.stdout)["object"]["sha"]
+
+
+          def create_branch(repo, branch_name, base_sha):
+              # 若分支已存在（上次已合并/关闭的 PR 残留），先删再建，保证干净起点。
+              # 已确认无开着的 template-sync PR（见 sync_repo），故删除安全。
+              p = gh_api("GET", f"repos/{repo}/git/refs/heads/{branch_name}", check=False)
+              if p.returncode == 0:
+                  gh_api("DELETE", f"repos/{repo}/git/refs/heads/{branch_name}", check=False)
+              gh_api("POST", f"repos/{repo}/git/refs",
+                     fields={"ref": f"refs/heads/{branch_name}", "sha": base_sha})
+
+
+          def list_open_template_sync_prs(repo):
+              # 幂等探针（R13-5 验收 #4 / concurrency: one_pr_per_repo）。
+              p = gh("pr", "list", "-R", repo, "--search", "[template-sync]", "--state", "open",
+                     "--json", "number,title", check=False)
+              if p.returncode != 0:
+                  raise RuntimeError(f"pr list {repo} failed: {p.stderr or p.stdout}")
+              return json.loads(p.stdout or "[]")
+
+
+          def sync_repo(product, seed_files):
+              repo = product["repo"]
+              default_branch = product.get("default_branch", "main")
+              print(f"\n=== sync {repo} (branch={default_branch}) ===")
+
+              # 幂等：同一仓库只保留一张开着的 template-sync PR（one_pr_per_repo）。
+              open_prs = list_open_template_sync_prs(repo)
+              if open_prs:
+                  print(f"  已存在开着的 template-sync PR #{open_prs[0]['number']}，跳过（one_pr_per_repo）")
+                  return
+
+              base_sha = get_default_branch_sha(repo, default_branch)
+              branch_name = f"template-sync/{LOOP_SHORT_SHA}"
+              changes = []  # (path, mode, action, content_bytes, existing_sha)
+
+              for sf in seed_files:
+                  path = sf["path"]
+                  mode = sf.get("mode", "create-only")
+                  tpl = read_loop_template(path)
+                  if tpl is None:
+                      print(f"  · {path}: loop 侧无模板源（{TEMPLATE_ROOT}/{path} 不存在），"
+                            f"跳过（可能待 R13-3 落地）")
+                      continue
+                  exists, cur_sha, cur_content = repo_file_info(repo, path, default_branch)
+                  if mode == "create-only":
+                      if exists:
+                          print(f"  · {path}: 已存在（create-only 不覆盖）")
+                          continue
+                      changes.append((path, mode, "create", tpl, None))
+                  elif mode == "replace":
+                      if exists and cur_content == tpl:
+                          print(f"  · {path}: 内容一致，无变更")
+                          continue
+                      action = "update" if exists else "create"
+                      changes.append((path, mode, action, tpl, cur_sha if exists else None))
+                  else:
+                      raise RuntimeError(f"未知 mode={mode!r} for {path}")
+
+              if not changes:
+                  print("  无变更，不开 PR")
+                  return
+
+              if not OPEN_PR_ONLY:
+                  # 结构性禁用直推（R13-5 验收 #3）：到达此处说明常量被篡改。
+                  raise RuntimeError("OPEN_PR_ONLY=False is forbidden by code (R13-5)")
+
+              create_branch(repo, branch_name, base_sha)
+              for path, mode, action, tpl, cur_sha in changes:
+                  put_repo_file(repo, path, branch_name, tpl, cur_sha)
+                  print(f"  ✓ {path}: {action}（{mode}）")
+
+              ensure_label(repo, PR_LABEL, "0e8a16")
+              pr_title = f"[template-sync] {LOOP_SHA} → {repo}"
+              pr_body = (
+                  f"template-sync fan-out from loop.\n\n"
+                  f"- source: `{LOOP_REPO}@{LOOP_SHA}`\n"
+                  f"- branch: `{branch_name}`\n"
+                  f"- changes: {len(changes)} file(s)\n\n"
+                  f"本 PR 由 loop 仓 template-sync workflow 自动开出（open_pr_only=true）。"
+                  f"它走与普通 PR 完全相同的门禁，豁免数为 0（CHARTER N5 / R13-5 验收 #3）。"
+                  f"不要因为『来自 loop』而给予任何豁免。\n\n"
+                  f"文件清单:\n"
+              )
+              for path, mode, action, _, _ in changes:
+                  pr_body += f"- `{path}` ({mode}, {action})\n"
+              with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+                  f.write(pr_body)
+                  body_path = f.name
+              p = gh("pr", "create", "-R", repo, "--base", default_branch, "--head", branch_name,
+                     "--title", pr_title, "--label", PR_LABEL, "--body-file", body_path, check=False)
+              if p.returncode != 0:
+                  raise RuntimeError(f"gh pr create {repo} failed: {p.stderr or p.stdout}")
+              print(f"  ✓ PR opened: {p.stdout.strip()}")
+
+
+          def detect_shadow_repos(registered_repos):
+              """检测未在 products.yml 登记但引用了 loop reusable workflow 的仓库（脱管产品仓）。"""
+              shadows = []
+              p = gh("repo", "list", LOOP_ORG, "--limit", "100",
+                     "--json", "nameWithOwner", "--jq", ".[].nameWithOwner", check=False)
+              if p.returncode != 0:
+                  raise RuntimeError(f"gh repo list {LOOP_ORG} failed: {p.stderr or p.stdout}")
+              all_repos = [r.strip() for r in (p.stdout or "").splitlines() if r.strip()]
+              for r in all_repos:
+                  if r == LOOP_REPO or r in registered_repos:
+                      continue
+                  # 受 App 安装可见性限制：只能看到已安装 App 的仓（脱管影子仓的固有边界）。
+                  pwf = gh_api("GET", f"repos/{r}/contents/.github/workflows", check=False)
+                  if pwf.returncode != 0:
+                      continue
+                  try:
+                      entries = json.loads(pwf.stdout or "[]")
+                  except Exception:
+                      continue
+                  wf_names = [e.get("name", "") for e in entries if isinstance(e, dict)]
+                  loop_shells = [w for w in wf_names if w.startswith("loop-") and w.endswith(".yml")]
+                  if not loop_shells:
+                      continue
+                  pf = gh_api("GET", f"repos/{r}/contents/.github/workflows/{loop_shells[0]}", check=False)
+                  if pf.returncode != 0:
+                      continue
+                  try:
+                      data = json.loads(pf.stdout)
+                      content = base64.b64decode(data.get("content") or "").decode("utf-8", "replace")
+                  except Exception:
+                      continue
+                  if "Cloudbird-Software/loop/.github/workflows/reusable-" in content:
+                      shadows.append(r)
+              return shadows
+
+
+          def main():
+              global INCIDENT_LABEL, PR_LABEL
+              with open(PRODUCTS_FILE, encoding="utf-8") as f:
+                  cfg = yaml.safe_load(f)
+              products = cfg.get("products") or []
+              sync = cfg.get("sync") or {}
+              seed_files = sync.get("seed_files") or []
+              INCIDENT_LABEL = sync.get("incident_label", INCIDENT_LABEL)
+              PR_LABEL = sync.get("pr_label", PR_LABEL)
+
+              print(f"loop={LOOP_REPO}@{LOOP_SHA} (short={LOOP_SHORT_SHA})")
+              print(f"OPEN_PR_ONLY={OPEN_PR_ONLY} (hardcoded in code, NOT from config)")
+              print(f"seed_files={len(seed_files)}, products={len(products)}, "
+                    f"incident_label={INCIDENT_LABEL}, pr_label={PR_LABEL}")
+
+              enabled = [p for p in products if p.get("enabled") is True]
+              print(f"enabled products: {len(enabled)}")
+
+              registered = {p["repo"] for p in products if p.get("repo")}
+              failures = []
+
+              # 1) 扇出到各产品仓
+              for product in enabled:
+                  try:
+                      sync_repo(product, seed_files)
+                  except Exception as e:
+                      tb = traceback.format_exc()
+                      repo = product.get("repo", "?")
+                      print(f"  ✗ sync {repo} failed: {e}", file=sys.stderr)
+                      print(tb, file=sys.stderr)
+                      failures.append(repo)
+                      open_incident(
+                          f"Incident: template-sync fan-out failed for {repo} @ {LOOP_SHORT_SHA}",
+                          f"产品仓 `{repo}` 在 template-sync 扇出中失败。\n\n"
+                          f"- loop source: `{LOOP_REPO}@{LOOP_SHA}`\n"
+                          f"- error:\n```\n{tb}\n```\n\n"
+                          f"Run: {os.environ.get('GITHUB_SERVER_URL','')}/"
+                          f"{os.environ.get('GITHUB_REPOSITORY','')}/actions/runs/"
+                          f"{os.environ.get('GITHUB_RUN_ID','')}"
+                      )
+
+              # 2) 影子仓检测（R13-5 验收 #5）
+              try:
+                  for s in detect_shadow_repos(registered):
+                      print(f"  ✗ shadow repo: {s}（引用 loop reusable workflow 但未登记）",
+                            file=sys.stderr)
+                      failures.append(s)
+                      open_incident(
+                          f"Incident: shadow product repo {s} references loop reusable workflow but is unregistered",
+                          f"仓库 `{s}` 引用了 `Cloudbird-Software/loop/.github/workflows/reusable-*.yml`，"
+                          f"但未在 loop 仓 `products.yml` 登记。\n\n"
+                          f"这是脱管产品仓（R13-5 验收 #5）。请人类确认：\n"
+                          f"- 若是真实产品仓 → 在 `products.yml` 登记"
+                          f"（name/repo/role/default_branch/loop_pin_file/enabled）\n"
+                          f"- 若不是 → 删除其薄壳 workflow 引用\n\n"
+                          f"loop source: `{LOOP_REPO}@{LOOP_SHA}`"
+                      )
+              except Exception as e:
+                  tb = traceback.format_exc()
+                  print(f"  ✗ shadow detection failed: {e}", file=sys.stderr)
+                  print(tb, file=sys.stderr)
+                  failures.append("shadow-detection")
+                  open_incident(
+                      f"Incident: template-sync shadow-repo detection failed @ {LOOP_SHORT_SHA}",
+                      f"检测未登记产品仓失败，无法确认是否存在脱管仓。\n\n```\n{tb}\n```"
+                  )
+
+              print(f"\n=== summary: failures={len(failures)} ===")
+              if failures:
+                  for f in failures:
+                      print(f"  ✗ {f}")
+                  print("template-sync FAILED")
+                  sys.exit(1)
+              print("template-sync OK")
+
+
+          try:
+              main()
+          except SystemExit:
+              raise
+          except Exception:
+              tb = traceback.format_exc()
+              print(f"FATAL: {tb}", file=sys.stderr)
+              try:
+                  open_incident(
+                      f"Incident: template-sync fatal error @ {LOOP_SHORT_SHA}",
+                      f"template-sync 发生未捕获异常。\n\n```\n{tb}\n```"
+                  )
+              except Exception as ie:
+                  print(f"ERROR: failed to open catch-all incident: {ie}", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      # ============================================================
+      # 兜底 Incident：仅当 fan-out 脚本步骤被 skip（前置步骤失败，脚本未运行）时触发。
+      # 脚本自身失败时已自行开 Incident，此处不重复（outcome != 'skipped' 即跳过）。
+      # ============================================================
+      - name: Open Incident on fan-out failure
+        if: failure() && steps.run-script.outcome == 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # 不用 `|| true`：先查再建 label（CHARTER N5）。
+          if ! gh label list -R "$LOOP_REPO" --json name --jq '.[].name' | grep -qx template-sync-alert; then
+            gh label create template-sync-alert -R "$LOOP_REPO" --color b60205
+          fi
+          BODY="$(mktemp)"
+          {
+            echo "template-sync fan-out 未能运行（前置步骤失败：checkout / setup-python / install / CONDUCTOR_APP token 之一）。"
+            echo ""
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo ""
+            echo "可能原因："
+            echo "- secrets.CONDUCTOR_APP_ID / CONDUCTOR_APP_KEY 未配置或 App 未安装到目标产品仓"
+            echo "- checkout / setup-python / pip install 失败"
+            echo ""
+            echo "Action: 查看失败的 fan-out job 各 step 日志。"
+          } > "$BODY"
+          gh issue create -R "$LOOP_REPO" \
+            --title "Incident: template-sync fan-out did not run @ $(date -u +%FT%TZ)" \
+            --label "template-sync-alert" \
+            --body-file "$BODY"

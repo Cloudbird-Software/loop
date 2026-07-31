@@ -1,0 +1,84 @@
+name: reusable-gates
+# ============================================================
+# 产品仓门禁复用工作流（R13-1）。
+#
+# 设计：
+#   - 以 workflow_call 暴露，输入参数化（profile / loop-sha / loop-repo）。
+#   - 产品仓不持有 gates/ 副本（CHARTER N9）——gate 实现由 loop 仓提供：
+#     先 checkout 产品仓，再 checkout loop 仓到 .loop-control/，设 LOOP_ROOT 指向它，
+#     调用 .loop-control/gates/run_gates.py。run_gates.py 的 search_dirs 含
+#     ${LOOP_ROOT}/gates，故 gate 实现从 loop 侧解析；profile 从 loop 侧 policy.yml 解析。
+#   - 「未执行即失败」语义不变（CHARTER N8.3）：
+#       gate 缺席 → exit 2（GATE_NOT_EXECUTED）；gate 失败 → exit 1；崩溃 → exit 3。
+#     任何非零退出码都让本 job 红。
+#   - 产品仓无法通过传参把某道 gate 关成 SKIP——只能通过 policy.yml 的 profile 显式声明。
+#     本 workflow 不暴露 gate 集合输入（profile 是唯一开关面），故传参无法缩小集合。
+#   - 不使用 `secrets: inherit`：GITHUB_TOKEN 在 workflow_call 级别声明，由调用方显式传入；
+#     GH_TOKEN / GITHUB_TOKEN 两个环境变量均映射到该 token（gate 读 PR body / 评论所需）。
+#   - 所有 actions/* 钉 40 位 SHA + 行尾版本注释（CHARTER N4）。
+#   - 铁律（CHARTER N5）：本文件不允许 `|| true`、`set +e`、`continue-on-error: true`。
+# ============================================================
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: "policy.yml gates.profiles.<name>（由 loop 侧 policy.yml 提供）"
+        required: false
+        type: string
+        default: "strict"
+      loop-sha:
+        description: "loop 仓 40 位 commit SHA，用于 checkout gate 实现（钉 SHA，禁止 main/latest）"
+        required: true
+        type: string
+      loop-repo:
+        description: "loop 仓坐标（owner/repo）"
+        required: false
+        type: string
+        default: "Cloudbird-Software/loop"
+    secrets:
+      GITHUB_TOKEN:
+        description: "调用方仓的 GITHUB_TOKEN（gate 读 PR/评论所需；GH_TOKEN 与 GITHUB_TOKEN 均映射到此）"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gate_charter/verdict/paths/testown 需读 PR body 与评论
+    steps:
+      # 1. checkout 产品仓（全历史：gate_diffsize/paths/upstream/lockdiff 需要 git diff）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      # 2. checkout loop 仓到 .loop-control/（产品仓不持有 gates/ 副本，gate 实现由 loop 提供）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ inputs.loop-repo }}
+          ref: ${{ inputs.loop-sha }}
+          path: .loop-control
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install PyYAML
+
+      - name: Run gates via run_gates.py
+        env:
+          # LOOP_ROOT 指向 loop checkout；run_gates.py 的 search_dirs 含 ${LOOP_ROOT}/gates。
+          LOOP_ROOT: ${{ github.workspace }}/.loop-control
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # --root . 把 gate 执行根指向产品仓（当前 checkout 根）；
+          # run_gates.py 据此定位 policy.yml 的 profile 与 git diff 目标。
+          python3 .loop-control/gates/run_gates.py --profile "${{ inputs.profile }}" --root .

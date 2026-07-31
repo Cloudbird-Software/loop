@@ -1,0 +1,39 @@
+name: loop-review
+# ============================================================
+# product-x 强模型验收薄壳（R13-3）。
+#
+# 铁律（CHARTER N9 / N9.7）：
+#   - 本文件只允许 `uses:` 引用 loop 侧 reusable workflow，零本地 run 步骤。
+#     任何在薄壳里加 run/逻辑的改动 → CODEOWNERS 拦截 + gate/loop-conformance 红。
+#   - SHA 用 0000...0000 占位，由 upgrade 环回填（禁止手填 main/latest，CHARTER N4）。
+#   - 不使用 secrets: inherit（CHARTER N10）：secrets 显式传入。
+#   - required: false（CHARTER N9.7）：模型不确定性不得卡合并线，
+#     能卡合并的只有确定性 gate 与被复现确认后固化出来的 checker。
+#     非阻塞 ≠ 允许假绿（CHARTER N5）：本 workflow 自身失败仍会红，只是不挡 merge。
+# ============================================================
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "waves/**"
+      - "cards/**"
+      - "**/*.json"
+      - ".loop/schemas/**"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  review:
+    uses: Cloudbird-Software/loop/.github/workflows/reusable-review.yml@0000000000000000000000000000000000000000
+    with:
+      required: false
+      loop-sha: ${{ vars.LOOP_SHA }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}

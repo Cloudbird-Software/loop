@@ -1,0 +1,21 @@
+# product-x CODEOWNERS — 敏感路径守卫
+# 人类必须审读的文件变更
+
+# 章程是人类唯一终局裁定的文件
+CHARTER.md                   @human
+
+# 契约与验收测试
+contracts/                   @human
+tests/acceptance/            @human
+
+# loop pin 文件
+LOOP.yml                     @human
+UPSTREAM.yaml                @human
+
+# 执行契约
+.loop/CONTRACT.md            @human
+.loop/verify.sh              @human
+.github/CODEOWNERS           @human
+
+# CI 薄壳（只允许引用 loop reusable workflow，不允许加本地逻辑）
+.github/workflows/loop-*.yml @human

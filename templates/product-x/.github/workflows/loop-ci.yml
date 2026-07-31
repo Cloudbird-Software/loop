@@ -1,0 +1,33 @@
+name: loop-ci
+# ============================================================
+# product-x CI 薄壳（R13-3）。
+#
+# 铁律（CHARTER N9）：
+#   - 本文件只允许 `uses:` 引用 loop 侧 reusable workflow，零本地 run 步骤。
+#     任何在薄壳里加 run/逻辑的改动 → CODEOWNERS 拦截 + gate/loop-conformance 红。
+#   - SHA 用 0000...0000 占位，由 upgrade 环回填（禁止手填 main/latest，CHARTER N4）。
+#   - 不使用 secrets: inherit（CHARTER N10）：secrets 显式传入。
+# ============================================================
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  ci:
+    uses: Cloudbird-Software/loop/.github/workflows/reusable-product-ci.yml@0000000000000000000000000000000000000000
+    with:
+      language: python
+      python-version: "3.11"
+      run-lint: true
+      run-test: true
+      run-build: false
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
