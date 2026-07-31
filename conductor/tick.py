@@ -733,8 +733,11 @@ def race_mode_handler():
     rt = exe_sec.get("race_tiers", ["critical"])
     if not isinstance(rt, list): rt = ["critical"]
     race_tiers = set(rt)
-    # 收集所有 state=ready 且 tier ∈ race_tiers 的卡
-    racers = [(it, blk) for it, blk in get_cards(states={"ready"}) if blk.get("tier") in race_tiers]
+    # R12-4：显式排除未复现的 claim F-card（state=unconfirmed）——wave-level gate #2。
+    # get_cards(states={"ready"}) 已按 state 过滤，此处为 defense-in-depth。
+    from conductor.claim_intake import is_claim_pickable_by_impl
+    racers = [(it, blk) for it, blk in get_cards(states={"ready"})
+              if blk.get("tier") in race_tiers and is_claim_pickable_by_impl(blk)]
     # 对每张 racer：确保在 claims_issued 中有两笔，否则补标记（实际派卡由 loopd h_next 做，这里只做收尾处理）
     # 收尾：找到 state=done / in_review 的成对 PR（同 card_id 前缀，不同 sandbox/model）
     all_claimed = [(it, blk) for it, blk in get_cards(states={"claimed","in_progress","in_review","verify"})]
