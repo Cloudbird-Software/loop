@@ -72,7 +72,7 @@ jobs:
         if: inputs.language == 'python'
         with:
           python-version: ${{ inputs.python-version }}
-      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
@@ -138,7 +138,7 @@ jobs:
         if: inputs.language == 'python'
         with:
           python-version: ${{ inputs.python-version }}
-      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
@@ -190,7 +190,7 @@ jobs:
         if: inputs.language == 'python'
         with:
           python-version: ${{ inputs.python-version }}
-      - uses: actions/setup-node@39370e3970a6d050c48ff5d8fdefd6a0d8b2e10d # v4.1.1
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         if: inputs.language == 'node'
         with:
           node-version: ${{ inputs.node-version }}
