@@ -15,7 +15,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-permissions: {contents: read}
+permissions:
+  contents: read
+  pull-requests: read   # 必须显式授予，否则 reusable workflow gates.yml 的 job-level
+                        # pull-requests: read 无法生效（GitHub Actions 权限不可越级提升）
 concurrency:
   group: pr-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -200,17 +203,28 @@ jobs:
           from conductor.materialize import extract_cards, load_charter_ids, validate
 
           if not pathlib.Path("waves").exists():
-              print("waves/ 不存在，跳过（本仓暂无波次声明）")
-              sys.exit(0)
+            print("waves/ 不存在，跳过（本仓暂无波次声明）")
+            sys.exit(0)
           cards, metas = extract_cards("waves/")
           print(f"解析到 {len(cards)} 张卡 / {len(metas)} 个波次文件")
           if not cards:
-              print("waves/ 存在但未解析到任何卡片 → 视为格式错误")
-              sys.exit(1)
+            print("waves/ 存在但未解析到任何卡片 → 视为格式错误")
+            sys.exit(1)
           errors, valid = validate(cards, load_charter_ids())
           if errors:
-              for e in errors:
-                  print("  ✗", e)
-              sys.exit(1)
+            for e in errors:
+              print("  ✗", e)
+            sys.exit(1)
           print(f"四校验通过：{len(valid)} 张卡")
           PY
+
+  # ============================================================
+  # gates —— 通过复用作业 .github/workflows/gates.yml 执行全部门禁（R11-1）。
+  # run_gates.py 读取 policy.yml gates.profiles.default，逐个调用 gate_*.py。
+  # 任何 gate 失败/缺席/崩溃都会让本 job 红（CHARTER N8.3）。
+  # ============================================================
+  gates:
+    needs: [test]   # 等待 test 通过后再跑门禁（避免无谓的 gate 执行）
+    uses: ./.github/workflows/gates.yml
+    with:
+      profile: default

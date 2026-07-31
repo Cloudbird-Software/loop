@@ -1,0 +1,62 @@
+name: gates
+# gates —— 复用作业：通过 gates/run_gates.py 执行全部门禁（R11-1）。
+#
+# 设计：
+#   - 以 workflow_call 暴露，输入 profile / target_repo
+#   - loop 的 pr-ci.yml 与 product-x 的 ci.yml 均通过本作业执行门禁
+#   - run_gates.py 读取 policy.yml 的 gates.profiles.<profile> 决定执行哪些 gate
+#   - gate 缺席 → exit 2（GATE_NOT_EXECUTED）；gate 失败 → exit 1；崩溃 → exit 3
+#   - 任何非零退出码都让本 job 红——CHARTER N8.3「未执行等价于失败」
+#
+# job 名 "gates" 与 settings/loop-main-protection.json 的 required_status_checks 对齐。
+on:
+  workflow_call:
+    inputs:
+      profile:
+        description: "policy.yml gates.profiles.<name>（default = loop 全集）"
+        required: false
+        type: string
+        default: "default"
+      target_repo:
+        description: "目标仓（空 = 当前仓；product-x 接线时由 R13-3 传入）"
+        required: false
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "profile name"
+        required: false
+        type: string
+        default: "default"
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gate_charter/verdict/paths/testown 需读 PR body 与评论
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # gate_diffsize/paths/upstream/lockdiff 需要 git diff 历史
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install PyYAML
+
+      - name: Run gates via run_gates.py
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 gates/run_gates.py --profile "${{ inputs.profile }}"
