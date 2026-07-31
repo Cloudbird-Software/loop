@@ -36,8 +36,8 @@ on:
         type: string
         default: "Cloudbird-Software/loop"
     secrets:
-      GITHUB_TOKEN:
-        description: "调用方仓的 GITHUB_TOKEN（gate 读 PR/评论所需；GH_TOKEN 与 GITHUB_TOKEN 均映射到此）"
+      GH_TOKEN:
+        description: "调用方仓的 GITHUB_TOKEN（gate 读 PR/评论所需；传值时用 ${{ secrets.GITHUB_TOKEN }}）"
         required: true
 
 permissions:
@@ -75,8 +75,8 @@ jobs:
         env:
           # LOOP_ROOT 指向 loop checkout；run_gates.py 的 search_dirs 含 ${LOOP_ROOT}/gates。
           LOOP_ROOT: ${{ github.workspace }}/.loop-control
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
           # --root . 把 gate 执行根指向产品仓（当前 checkout 根）；
