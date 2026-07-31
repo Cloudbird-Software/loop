@@ -10,7 +10,9 @@
 
 结构：
   - 零 LLM 汇总部分（纯数字 / 纯统计）——本脚本直接产出
-  - LLM 归因部分（为什么会这样）——暂留 plan-ops adapter（stub，写入 _pending_adapter）
+  - LLM 归因部分（为什么会这样）——retro 未集成 LLM 调用，标注为 human-verify 并生成待办（不假实现）
+  - 波次验收部分（run_wave_acceptance）——解析 Wave 文件的『本波次的检查方法』段，逐条执行机器可执行检查
+  - 通知部分（notify）——走 GitHub Issue 评论 / 开 Incident issue，作为真实可送达通道
 """
 import json, os, subprocess, sys, time, datetime, collections, pathlib, hashlib, tempfile, re
 
@@ -26,7 +28,7 @@ JOURNAL_DIR = LOOP_ROOT / ".loop" / "journal"
 RETRO_OUTBOX = LOOP_ROOT / ".loop" / "retro"
 RETRO_PREV = LOOP_ROOT / ".loop" / "retro" / "prev_action_items.json"
 POLICY_FILE = E.get("LOOP_POLICY", "policy.yml")
-LLM_ATTRIBUTION_ADAPTER = "plan-ops"   # 以后可以换成 plan-ops-1 sandbox 接口；目前只写 stub
+LLM_ATTRIBUTION_ADAPTER = "plan-ops"   # 通道：plan-ops；retro 未集成 LLM 调用，归因标注为 human-verify（不假实现）
 
 # ==================================================================
 # 通用
@@ -285,16 +287,26 @@ def q5_prev_action_items_landed(prev_items):
     n = len(prev_items)
     landed = 0; partial = 0; missed = 0
     evidence = []
+    # 真实实现：查近 50 条 git log 是否含行动项的关键词
+    try:
+        p = subprocess.run(["git", "log", "--oneline", "-50"],
+                           capture_output=True, text=True, cwd=str(LOOP_ROOT))
+        git_log = p.stdout if p.returncode == 0 else ""
+    except Exception:
+        git_log = ""
     for key, item in prev_items.items():
         expected_kw = item.get("expected_change_sha_or_keyword", "")
-        # 简化版：查 git log 是否含关键词（此处 stub，标记"半"）
-        # 真实版：subprocess.run(["git","log","--oneline","-50"]) 搜
-        if expected_kw:
-            evidence.append(f"{key}: 半 — 未验证（journal mirror 或 git log 未检查到）")
-            partial += 1
-        else:
+        if not expected_kw:
             evidence.append(f"{key}: 有 — expected 字段为空视为落地")
             landed += 1
+            continue
+        # 在 git log 中搜关键词（真实检查，非 stub）
+        if expected_kw in git_log:
+            evidence.append(f"{key}: 有 — git log 命中关键词『{expected_kw}』")
+            landed += 1
+        else:
+            evidence.append(f"{key}: 无 — git log 未命中『{expected_kw}』（需 human-verify 是否落地）")
+            missed += 1
     status = "checked"
     return {"status": status, "n": n, "landed": landed, "partial": partial, "missed": missed, "evidence": evidence}
 
@@ -343,22 +355,28 @@ def main():
     RETRO_PREV.write_text(json.dumps(action_items, indent=2, ensure_ascii=False))
     print(f"saved {len(action_items)} action items → {RETRO_PREV}")
 
-    # LLM 归因部分：plan-ops adapter（stub，等真实接口后替换）
+    # LLM 归因部分：retro 未集成 LLM 调用，明确标注为 human-verify 并生成待办（不假实现）
+    # 真实 LLM 归因待 plan-ops sandbox 接口就绪后接入；在此之前不静默挂起，而是产出待办推给人类
     llm_attr = {
-        "schema": "llm-attribution-stub",
+        "schema": "llm-attribution-human-verify",
         "adapter": LLM_ATTRIBUTION_ADAPTER,
         "channel": "plan-ops",
-        "status": "pending",
+        "status": "needs_human",
         "generated_at": now.isoformat(),
+        "reason": "retro 未集成 LLM 调用；归因需人类基于下列输入判定，已生成待办不静默挂起",
         "questions": {
-            "why_systemic": "（stub）调用 plan-ops sandbox 让 LLM 回答：为什么 Q1 该类系统性失败会出现？（附 journal + CI stats 上下文）",
-            "why_preconditions": "（stub）调用 plan-ops sandbox 让 LLM 回答：如何从 Q2 前置条件上游拦截？",
+            "why_systemic": "human-verify：基于 Q1 的 systemic_callouts，人类判定为什么该类系统性失败会出现（附 journal + CI stats 上下文）",
+            "why_preconditions": "human-verify：基于 Q2 的 top_preconditions，人类判定如何从上游拦截",
         },
         "input_summary_keys": ["q1_systemic_failures.systemic_callouts","q2_common_preconditions.top_preconditions"],
+        "todo": [
+            "人工回答 why_systemic（输入：q1_systemic_failures.systemic_callouts + journal + CI stats）",
+            "人工回答 why_preconditions（输入：q2_common_preconditions.top_preconditions）",
+        ],
     }
     llm_path = RETRO_OUTBOX / f"llm_attribution_{year}W{week:02d}.json"
     llm_path.write_text(json.dumps(llm_attr, indent=2, ensure_ascii=False))
-    print(f"LLM attribution stub → {llm_path}")
+    print(f"LLM attribution (human-verify, needs_human) → {llm_path}")
 
     # 产出 Finding issue 正文（markdown）
     issue_body = f"""# 周度 Retro {year}-W{week:02d}（zero_llm + LLM attribution via plan-ops）
@@ -400,7 +418,7 @@ def main():
 ## 五份 JSON 输出 artifact 清单
 
 - retro JSON：`.loop/retro/retro_{year}W{week:02d}.json`
-- LLM 归因（plan-ops adapter, pending）：`.loop/retro/llm_attribution_{year}W{week:02d}.json`
+- LLM 归因（human-verify, needs_human）：`.loop/retro/llm_attribution_{year}W{week:02d}.json`
 - 本周行动项（下周 Q5 检查）：`.loop/retro/prev_action_items.json`
 - issue 正文：`.loop/retro/retro_{year}W{week:02d}_issue.md`
 """
@@ -427,5 +445,386 @@ def main():
     json_path.write_text(json.dumps(retro_block, indent=2, ensure_ascii=False))
     print(f"retro JSON artifact → {json_path}")
 
+# ==================================================================
+# 波次验收：run_wave_acceptance / notify / close_wave_parent（R14-2）
+# ==================================================================
+# 通知通道选型见 DECISIONS.md ADR-013：GitHub Issue 评论（贴到 Wave 父 issue）/
+# 开 Incident issue，作为真实可送达的落地通道，不引入外部 webhook 依赖。
+
+# human-verify 关键词：检查项文本命中即标为需人类验证
+_HUMAN_VERIFY_KEYWORDS = (
+    "人为", "人类", "人工", "签署", "reviewer", "观察", "需人", "人需",
+    "异构", "签署", "7 天", "连续", "无人值守",
+)
+
+# 已知可机检的检查模式 → 命令（让现有 Wave 文件的散文检查项也能被机检）
+_KNOWN_MACHINE_CHECKS = [
+    (re.compile(r"no-fake-green|假绿"), "bash lenses/no-fake-green.sh"),
+    (re.compile(r"pytest.*全绿|测试.*全绿|全.*测试"), "python3 -m pytest tests/ -q"),
+    (re.compile(r"loop-conformance|副本.*为零|副本为零"), "python3 gates/run_gates.py --gate conformance"),
+]
+
+# 机器命令首词白名单：反引号片段以这些开头才视为可执行命令
+_CMD_FIRSTWORDS = ("python", "python3", "pytest", "bash", "sh", "gh", "git", "make", "npm", "node")
+
+
+def _extract_wave_id(wave_file):
+    """从文件名或内容提取 wave id（如 WAVE-14）。"""
+    name = os.path.basename(str(wave_file))
+    m = re.match(r"(WAVE-\d+)", name)
+    if m:
+        return m.group(1)
+    try:
+        text = pathlib.Path(wave_file).read_text(encoding="utf-8")
+        m = re.search(r"(WAVE-\d+)", text)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "WAVE-UNKNOWN"
+
+
+def _parse_acceptance_section(wave_file):
+    """解析 waves/WAVE-XX.md 的『本波次的检查方法』段，返回检查项列表。
+
+    每项：{"id": int, "text": str, "command": str|None}
+    command 来源：① 行内反引号包裹的可执行 shell 命令；② 命中 _KNOWN_MACHINE_CHECKS 模式。
+    都没有则 command=None（后续按 human-verify 关键词或默认归为 human-verify）。
+    """
+    text = pathlib.Path(wave_file).read_text(encoding="utf-8")
+    # 定位段：从『## 本波次的检查方法』到下一个二级标题或文件结束
+    m = re.search(r"##\s*本波次的检查方法[^\n]*\n", text)
+    if not m:
+        return []
+    start = m.end()
+    m2 = re.search(r"\n##\s", text[start:])
+    end = start + m2.start() if m2 else len(text)
+    section = text[start:end]
+    # 解析顶格编号项 N. （多行直到下一个编号项）
+    items = []
+    current = None
+    for line in section.splitlines():
+        m = re.match(r"^(\d+)\.\s+(.*)$", line)
+        if m:
+            if current:
+                items.append(current)
+            current = {"id": int(m.group(1)), "text": m.group(2)}
+        elif current and line.strip():
+            current["text"] += "\n" + line.strip()
+    if current:
+        items.append(current)
+    # 提取 command
+    for it in items:
+        it["command"] = _extract_command(it["text"])
+    return items
+
+
+def _extract_command(text):
+    """从检查项文本中提取可执行命令。优先反引号命令，其次已知模式。均无则 None。"""
+    # ① 反引号里以命令首词开头的片段
+    for c in re.findall(r"`([^`]+)`", text):
+        first = c.strip().split()[0] if c.strip() else ""
+        if first in _CMD_FIRSTWORDS:
+            return c.strip()
+    # ② 已知可机检模式
+    for pat, cmd in _KNOWN_MACHINE_CHECKS:
+        if pat.search(text):
+            return cmd
+    return None
+
+
+def _classify_check(item):
+    """判定检查项类型：machine / human-verify。"""
+    text = item.get("text", "")
+    if item.get("command"):
+        return "machine"
+    # 命中 human-verify 关键词 → 需人类验证
+    if any(kw in text for kw in _HUMAN_VERIFY_KEYWORDS):
+        return "human-verify"
+    # 无命令又无 human 关键词 → 保守归为 human-verify（不假机检）
+    return "human-verify"
+
+
+def run_wave_acceptance(wave_file, repo_root="."):
+    """执行 Wave 文件声明的『本波次的检查方法』，逐条机检或标 human-verify。
+
+    返回验收报告 dict（同时写入 evidence/wave-acceptance/<wave-id>.json）：
+      status: passed | failed | needs_human
+      human_verify_violation: bool  # human-verify 占比 > 1/3 即违规
+      checks: [{id, description, kind, command, exit_code, stdout, stderr, passed}]
+      human_verify_todos: [{id, description, action}]
+    规则：
+      - 任一 machine 检查失败 → status=failed
+      - human-verify 占比 > 1/3 → human_verify_violation=True 且 status=failed（Wave 设计不合规）
+      - 全部 machine 通过但有 human-verify 项（且未违规）→ status=needs_human（不能自动关闭）
+      - 全部 machine 通过且无 human-verify → status=passed（可自动关闭 Wave 父 issue）
+    """
+    wave_id = _extract_wave_id(wave_file)
+    items = _parse_acceptance_section(wave_file)
+    repo_root = str(repo_root)
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    checks = []
+    machine_passed = 0
+    machine_failed = 0
+    human_verify_count = 0
+    human_verify_todos = []
+
+    for it in items:
+        kind = _classify_check(it)
+        entry = {
+            "id": it["id"],
+            "description": it["text"].split("\n", 1)[0][:200],
+            "kind": kind,
+            "command": it.get("command"),
+            "exit_code": None,
+            "stdout": None,
+            "stderr": None,
+            "passed": None,
+        }
+        if kind == "machine" and it.get("command"):
+            try:
+                p = subprocess.run(
+                    it["command"], shell=True, cwd=repo_root,
+                    capture_output=True, text=True, timeout=180,
+                )
+                entry["exit_code"] = p.returncode
+                entry["stdout"] = p.stdout[-4000:] if p.stdout else ""
+                entry["stderr"] = p.stderr[-2000:] if p.stderr else ""
+                entry["passed"] = (p.returncode == 0)
+            except Exception as e:
+                entry["exit_code"] = -1
+                entry["stderr"] = f"执行异常：{e}"
+                entry["passed"] = False
+            if entry["passed"]:
+                machine_passed += 1
+            else:
+                machine_failed += 1
+        else:
+            human_verify_count += 1
+            entry["passed"] = None
+            human_verify_todos.append({
+                "id": it["id"],
+                "description": entry["description"],
+                "action": f"需人类验证：{entry['description']}",
+            })
+        checks.append(entry)
+
+    total = len(items)
+    # human-verify 占比 > 1/3 即违规（Wave 设计不合规）
+    human_verify_violation = (
+        total > 0 and human_verify_count > 0 and human_verify_count * 3 > total
+    )
+
+    if machine_failed > 0:
+        status = "failed"
+    elif human_verify_violation:
+        status = "failed"
+    elif human_verify_count > 0:
+        status = "needs_human"
+    else:
+        status = "passed"
+
+    summary = (
+        f"total={total}, machine_passed={machine_passed}, "
+        f"machine_failed={machine_failed}, human_verify={human_verify_count}"
+    )
+
+    report = {
+        "schema": "wave-acceptance-v1",
+        "wave_id": wave_id,
+        "wave_file": str(wave_file),
+        "generated_at": now_iso,
+        "status": status,
+        "human_verify_violation": human_verify_violation,
+        "summary": summary,
+        "total_checks": total,
+        "machine_checks_passed": machine_passed,
+        "machine_checks_failed": machine_failed,
+        "human_verify_count": human_verify_count,
+        "checks": checks,
+        "human_verify_todos": human_verify_todos,
+    }
+
+    # 归档进 evidence/wave-acceptance/<wave-id>.json（目录不存在则创建）
+    evidence_dir = pathlib.Path(repo_root) / "evidence" / "wave-acceptance"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    report_path = evidence_dir / f"{wave_id}.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    report["_report_path"] = str(report_path)
+
+    return report
+
+
+def _format_notify_message(event_type, payload):
+    """按事件类型生成 markdown 通知正文。"""
+    wave_id = payload.get("wave_id", "unknown")
+    report = payload.get("report") or {}
+    extra = payload.get("message", "")
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    header = f"## 波次通知：{event_type}（{wave_id}）\n\n> 生成时间：{now_iso} UTC\n\n"
+    if event_type == "wave_passed":
+        body = f"波次 **{wave_id}** 验收 **通过**（status=passed）。\n\n{report.get('summary','')}\n\n父 issue 将被自动关闭。"
+    elif event_type == "wave_failed":
+        body = f"波次 **{wave_id}** 验收 **失败**（status=failed）。\n\n{report.get('summary','')}\n\n失败检查项见 evidence 报告。"
+    elif event_type == "needs_human":
+        todos = report.get("human_verify_todos", [])
+        todo_md = "\n".join(f"- [ ] #{t['id']} {t['action']}" for t in todos) or "- （无）"
+        body = (f"波次 **{wave_id}** 验收需人类介入（status=needs_human）。\n\n"
+                f"{report.get('summary','')}\n\n"
+                f"### 待办清单（human-verify）\n{todo_md}")
+    elif event_type == "incident":
+        body = f"Incident 升级（{wave_id}）：{extra or '详见 issue 正文'}"
+    else:
+        body = f"事件 {event_type}（{wave_id}）：{extra}"
+    return header + body
+
+
+def notify(event_type, payload, repo=None):
+    """通知通道（R14-2）：走 GitHub Issue 评论 / 开 Incident issue。
+
+    event_type: "wave_passed" | "wave_failed" | "needs_human" | "incident"
+    payload: dict，含 wave_id / parent_issue / report / message / title / labels / dry_run
+    repo: "org/repo"，默认 REPO
+
+    通道选型（DECISIONS.md ADR-013）：
+      - wave_passed / wave_failed / needs_human → gh issue comment 贴到 Wave 父 issue
+      - incident → gh issue create 开新 Incident issue（label: incident）
+
+    dry-run：payload["dry_run"]=True 或 env LOOP_NOTIFY_DRY_RUN=1 → 不调 gh，只返回 would-send。
+    """
+    repo = repo or REPO
+    dry_run = bool(payload.get("dry_run")) or E.get("LOOP_NOTIFY_DRY_RUN", "") == "1"
+    parent_issue = payload.get("parent_issue")
+    wave_id = payload.get("wave_id", "unknown")
+    message = _format_notify_message(event_type, payload)
+
+    sent = {
+        "event_type": event_type,
+        "wave_id": wave_id,
+        "channel": "github-issue",
+        "dry_run": dry_run,
+        "repo": repo,
+        "message": message,
+    }
+
+    if dry_run:
+        sent["would_send"] = True
+        sent["target"] = ("issue_create" if event_type == "incident"
+                          else f"issue_comment#{parent_issue}")
+        return sent
+
+    if event_type == "incident":
+        # 开新 Incident issue（真实可送达，不引入外部 webhook）
+        title = payload.get("title") or f"Incident: {wave_id} 升级"
+        labels = payload.get("labels") or ["incident"]
+        cmd = ["gh", "issue", "create", "-R", repo, "--title", title, "--body", message]
+        for lb in labels:
+            cmd += ["--label", lb]
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        sent["issue_url"] = p.stdout.strip()
+        sent["returncode"] = p.returncode
+        sent["stderr"] = p.stderr
+        return sent
+
+    # 波次通过/失败/需人类介入 → 评论到 Wave 父 issue
+    if not parent_issue:
+        sent["error"] = "parent_issue 缺失，无法评论（已生成正文，但未送达）"
+        sent["returncode"] = -1
+        return sent
+    cmd = ["gh", "issue", "comment", str(parent_issue), "-R", repo, "--body", message]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    sent["comment_url"] = p.stdout.strip()
+    sent["returncode"] = p.returncode
+    sent["stderr"] = p.stderr
+    return sent
+
+
+def close_wave_parent(report, parent_issue, repo=None):
+    """验收 passed 时关闭 Wave 父 issue（gh issue close）。
+
+    非 passed 或缺 parent_issue 时返回未关闭原因，不抛异常。
+    """
+    repo = repo or REPO
+    if report.get("status") != "passed":
+        return {"closed": False, "reason": f"status={report.get('status')} != passed，不关闭"}
+    if not parent_issue:
+        return {"closed": False, "reason": "parent_issue 缺失，不关闭"}
+    p = subprocess.run(["gh", "issue", "close", str(parent_issue), "-R", repo],
+                       capture_output=True, text=True)
+    return {"closed": p.returncode == 0, "returncode": p.returncode, "stderr": p.stderr}
+
+
+def find_wave_parent_issue(wave_id, repo=None):
+    """按标题搜索 Wave 父 issue 号（open 优先）。找不到返回 None。"""
+    repo = repo or REPO
+    p = gh("issue", "list", "-R", repo, "--state", "open", "--limit", "50",
+           "--search", f"{wave_id} in:title", "--json", "number,title,state")
+    try:
+        items = json.loads(p.stdout or "[]")
+    except Exception:
+        return None
+    for it in items:
+        if wave_id in it.get("title", ""):
+            return it.get("number")
+    return None
+
+
+def _wave_acceptance_cli(wave_file, parent_issue=None, repo_root=None, dry_run=False):
+    """波次验收编排：run_wave_acceptance → notify → (passed 时) close。
+
+    供 `python conductor/retro.py wave-acceptance <wave_file>` 调用。
+    parent_issue 未传则按 wave_id 搜索（dry_run 时不搜索）。
+    """
+    repo_root = repo_root or str(LOOP_ROOT)
+    report = run_wave_acceptance(wave_file, repo_root=repo_root)
+    wave_id = report["wave_id"]
+    print(f"=== 波次验收 {wave_id} ===")
+    print(f"status={report['status']}  {report['summary']}")
+    print(f"human_verify_violation={report['human_verify_violation']}")
+    print(f"报告归档：{report.get('_report_path')}")
+
+    status = report["status"]
+    if status == "passed":
+        event_type = "wave_passed"
+    elif status == "needs_human":
+        event_type = "needs_human"
+    else:
+        event_type = "wave_failed"
+
+    # 解析父 issue（dry_run 时跳过 gh 搜索）
+    if parent_issue is None and not dry_run:
+        parent_issue = find_wave_parent_issue(wave_id)
+        if parent_issue:
+            print(f"找到 Wave 父 issue #{parent_issue}")
+
+    payload = {
+        "wave_id": wave_id,
+        "parent_issue": parent_issue,
+        "report": report,
+        "dry_run": dry_run,
+    }
+    sent = notify(event_type, payload)
+    print(f"notify {event_type}: dry_run={sent.get('dry_run')} returncode={sent.get('returncode','-')}")
+
+    # passed 时自动关闭父 issue
+    if status == "passed" and parent_issue:
+        closed = close_wave_parent(report, parent_issue)
+        print(f"close parent #{parent_issue}: {closed}")
+
+    return report
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "wave-acceptance":
+        # 波次验收模式：python conductor/retro.py wave-acceptance <wave_file> [--parent-issue N] [--dry-run]
+        wave_file = sys.argv[2]
+        parent_issue = None
+        dry_run = False
+        if "--parent-issue" in sys.argv:
+            idx = sys.argv.index("--parent-issue")
+            parent_issue = sys.argv[idx + 1]
+        if "--dry-run" in sys.argv:
+            dry_run = True
+        _wave_acceptance_cli(wave_file, parent_issue=parent_issue, dry_run=dry_run)
+    else:
+        main()

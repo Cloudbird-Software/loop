@@ -211,3 +211,47 @@ tag + 40 位 SHA）、薄壳 workflow（只 `uses:` loop 的 reusable workflow�
 有假绿时人以为自己有保护。
 
 **后果**：每一处例外都变成一条可被审计的书面承诺。
+
+## ADR-013: 通知通道选 GitHub Issue（评论 / 开 Incident issue），不引入外部 webhook
+
+**日期:** 2026-07-31 **状态:** 已采纳（R14-2）
+
+**决定**：波次验收与 Incident 的通知通道落地为 **GitHub Issue**——
+`conductor/retro.py::notify(event_type, payload, repo=None)` 实现三类事件的真实送达：
+  - `wave_passed` / `wave_failed` / `needs_human` → `gh issue comment` 贴到 Wave 父 issue
+    （passed 时另用 `gh issue close` 自动关闭父 issue）；
+  - `incident` → `gh issue create` 开新 Incident issue（label: `incident`）。
+
+不引入 Slack / 邮件 / 自建 webhook 等外部依赖；通道凭据复用 Actions 自带 `GITHUB_TOKEN`。
+
+**理由**：本次架构以 GitHub Issues 为唯一工单真源（ADR-011），通知送达的目标本身就是 issue
+（波次父 issue / Incident issue）。再架一层外部 webhook 等于在工单系统外建第二个通知真源，
+既增加凭据面（需额外 secret），又让"通知是否送达"变得不可观测。走 `gh issue comment/create`
+使"送达"等价于"issue 上多了一条评论/多了一张 issue"——可被既有审计与 no-fake-green 复检。
+
+**后果**：
+  - 通知是否真实送达 = gh 退出码是否为 0；失败不再静默（`|| echo skipped` 已移除）。
+  - dry-run（`LOOP_NOTIFY_DRY_RUN=1` 或 `payload["dry_run"]`）只生成正文不调 gh，供本地与测试用。
+  - 未来若需多通道（如 Slack 兜底），在 `notify` 内追加分支即可，不影响现有 Wave 调用方。
+  - retro 的 LLM 归因部分未集成 LLM 调用，明确标注为 `human-verify`（schema:
+    `llm-attribution-human-verify`，status: `needs_human`）并生成待办推给人类，不假实现、不静默挂起。
+
+---
+
+## ADR-014 — E2E 验收剧本就位，暂不宣告「端到端 ready」（R14-6）
+
+**背景**：WAVE-14 R14-6 要求以一次 7 天零人工干预的连续运行作为「端到端 ready」的唯一承重验收。
+本波次 impl 阶段已产出 `docs/E2E验收剧本.md`（5 大承重项 + 2 不变量 + 4 负向场景 + verify 操作手册）
+与 `bench/e2e.json` 骨架（字段结构 + 空事件数组）。
+
+**决定**：暂不宣告「端到端 ready」。理由：
+1. 验收 #3「在 product-probe 上完成一次 7 天零人工干预的连续运行」尚未执行——这是物理时间约束，非代码缺口。
+2. 验收 #5「执行者必须与本波次任何 impl 卡的执行者异构（CHARTER N12）」——本 impl 阶段由同一会话产出，真实 7 天运行须由异构 verify 角色执行并签署。
+
+**阻塞项**：
+- 需异构 verify 角色在 product-probe 上执行 `docs/E2E验收剧本.md` 第 6 节，7 天后填充 `bench/e2e.json`。
+- 四指标达标 + 人工介入=0 两条件同时满足后，方可在本 ADR 追加「ready」签署。
+
+**后果**：
+- 机制层（R14-1~R14-5）已就位：lens→真实工单、波次自动验收+通知、四指标可回放、零覆盖补测试、单一接单入口。
+- 「ready」一词在本项目内严格保留给 ADR-014 的最终签署，不得在其他场合提前使用。

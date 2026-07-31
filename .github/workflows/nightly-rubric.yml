@@ -31,24 +31,39 @@ jobs:
           LLM_GATEWAY_KEY: ${{ secrets.LLM_GATEWAY_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
+          # 设计：rubric 非阻塞——失败开 Finding 而非红 job；但 Finding 创建本身失败必须红（不静默 EXIT=0）。
+          # 走 R11-7 的 promptfoo/run.sh 包装器：缺凭证 exit 77（SKIPPED_NO_CREDENTIALS，可区分，非假绿）；
+          # 真实失败 propagate 非零退出码。此处用 if 捕获并显式开 Finding，不用 set +e / || true 吞错。
+          set -euo pipefail
           if [ ! -f promptfoo/promptfooconfig.yaml ]; then
             echo "::error::promptfoo config not scaffolded — see WAVE card"
-            echo "promptfoo config not scaffolded — see WAVE card" >&2
             exit 1
           fi
-          promptfoo eval -c promptfoo/promptfooconfig.yaml --filter-metadata rubric=true
-      - name: On failure → open Finding issue
-        if: ${{ failure() }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue create \
-            -R ${{ github.repository }} \
-            --title "Rubric nightly failed: $(date -u +%F)" \
-            --label finding --label rubric-nightly \
-            --body "LLM rubric nightly failed. See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            || echo "::warning::创建 Finding issue 失败"
+          if bash promptfoo/run.sh > /tmp/promptfoo.out 2>&1; then
+            echo "promptfoo rubric passed."
+            cat /tmp/promptfoo.out
+            exit 0
+          fi
+          RC=$?
+          cat /tmp/promptfoo.out
+          if [ "$RC" -eq 77 ]; then
+            echo "::notice::promptfoo SKIPPED_NO_CREDENTIALS (exit 77) — 凭证未配置，本周跳过；非失败也非假绿"
+            exit 0
+          fi
+          # 真实失败：必须开 Finding，不得静默 EXIT=0
+          echo "::error::promptfoo rubric failed (exit $RC) — opening Finding (非阻塞)"
+          gh label create rubric-finding --description "LLM rubric nightly finding (non-blocking)" --color FBCA04 --force
+          BODY="LLM rubric nightly failed (exit $RC). See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if gh issue create \
+              -R ${{ github.repository }} \
+              --title "Rubric nightly failed: $(date -u +%F)" \
+              --label rubric-finding \
+              --body "$BODY"; then
+            echo "Finding opened for rubric failure (非阻塞，job 保持绿)."
+            exit 0
+          fi
+          echo "::error::开 Finding 失败——不静默 EXIT=0，job 红"
+          exit 1
 
   # ============================================================
   # 每周五 Retro：OPC-v4 P6 五问零 LLM 汇总 + plan-ops LLM 归因
@@ -76,7 +91,7 @@ jobs:
         run: |
           set -e
           python conductor/retro.py
-      - name: Upload retro artifacts（JSON + 正文 + LLM attribution stub）
+      - name: Upload retro artifacts（JSON + 正文 + LLM attribution human-verify）
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
         with:
           name: retro-artifacts
@@ -86,19 +101,44 @@ jobs:
             .loop/retro/llm_attribution_*.json
             .loop/retro/prev_action_items.json
           retention-days: 90
-      - name: Repository dispatch → plan-ops（LLM 归因通道，adapter stub）
+      - name: Run wave acceptance（WAVE-14：传真实验收结果 + 通知送达）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set -e
+          # 波次验收：执行 WAVE-14.md 声明的『本波次的检查方法』，逐条机检或标 human-verify，
+          # 产出 evidence/wave-acceptance/WAVE-14.json，并通过 notify() 把结果评论到 Wave 父 issue
+          # （passed 时自动关闭父 issue）。status=passed/failed/needs_human 替换原 stub_pending。
+          python conductor/retro.py wave-acceptance waves/WAVE-14.md
+      - name: Upload wave acceptance evidence（归档进 evidence）
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
+        with:
+          name: wave-acceptance-evidence
+          path: evidence/wave-acceptance/*.json
+          retention-days: 90
+      - name: Repository dispatch → plan-ops（传真实验收结果，不再 stub_pending）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 以后 plan-ops sandbox 真实接口就绪后，把 body payload 替换成 HTTP POST
-          # 目前仅打一个空事件（不阻塞）
-          # fake-green-ok: plan-ops 归因通道是非阻塞的旁路事件，失败不应让 retro 作业红
-          set +e
+          # 传真实验收结果：从 evidence 报告读取 status + 每条检查项摘要，替换原 stub_pending。
+          # dispatch 失败即红（不再 || echo skipped 静默）——它现在承运真实验收数据。
+          set -euo pipefail
+          REPORT="evidence/wave-acceptance/WAVE-14.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::wave acceptance report not found at $REPORT"
+            exit 1
+          fi
+          STATUS=$(python3 -c "import json; print(json.load(open('$REPORT'))['status'])")
+          SUMMARY=$(python3 -c "import json,sys; r=json.load(open('$REPORT')); print(json.dumps({'total':r['total_checks'],'machine_passed':r['machine_checks_passed'],'machine_failed':r['machine_checks_failed'],'human_verify':r['human_verify_count'],'human_verify_violation':r['human_verify_violation']}))")
           WEEK=$(date -u +%GW%V)
           gh api repos/${{ github.repository }}/dispatches \
             -X POST \
             -f event_type=plan-ops-retro-attribution \
             -f "client_payload[week]=$WEEK" \
             -f "client_payload[adapter]=plan-ops" \
-            -f "client_payload[status]=stub_pending" \
-            || echo "plan-ops dispatch skipped (adapter stub; no fatal if network fails)"
+            -f "client_payload[wave_id]=WAVE-14" \
+            -f "client_payload[status]=$STATUS" \
+            -f "client_payload[summary]=$SUMMARY"

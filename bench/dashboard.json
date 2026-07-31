@@ -1,0 +1,278 @@
+{
+  "generated_at": "2026-07-31T09:52:23Z",
+  "charter_targets": {
+    "Q0": {
+      "target": 0.8,
+      "direction": "ge",
+      "unit": "closure_rate",
+      "desc": "Q0 闭环成功率 ≥80%（CHARTER Q0.3）"
+    },
+    "Q1": {
+      "target": 1800,
+      "direction": "le",
+      "unit": "seconds",
+      "desc": "Q1 僵尸回收延迟 ≤30 分钟（CHARTER Q1.1）"
+    },
+    "Q2": {
+      "target": 5,
+      "direction": "le",
+      "unit": "points",
+      "desc": "Q2 fork 后改动点 ≤5（CHARTER Q2.1）"
+    },
+    "Q3": {
+      "target": 0,
+      "direction": "le",
+      "unit": "count",
+      "desc": "Q3 假绿数 = 0（CHARTER Q3.1）"
+    },
+    "Q4": {
+      "target": 1.0,
+      "direction": "ge",
+      "unit": "ratio",
+      "desc": "Q4 进入修复的 claim 100% 有 REPRODUCED（CHARTER Q4.1）"
+    },
+    "Q5": {
+      "target": 1.0,
+      "direction": "ge",
+      "unit": "composite",
+      "desc": "Q5 产品仓对齐 + 依赖升级成功率（CHARTER Q5.1~Q5.3）"
+    }
+  },
+  "metrics": {
+    "Q0": {
+      "value": 1.0,
+      "target": 0.8,
+      "direction": "ge",
+      "status": "pass",
+      "unit": "closure_rate",
+      "desc": "Q0 闭环成功率与领卡时延",
+      "note": "",
+      "sub": {
+        "Q0.1": {
+          "value": 0,
+          "target": 60,
+          "direction": "le",
+          "status": "pass",
+          "unit": "seconds",
+          "desc": "Q0.1 从继续到领卡 ≤1 分钟",
+          "note": "",
+          "sub": {}
+        },
+        "Q0.2": {
+          "value": 0,
+          "target": 1800,
+          "direction": "le",
+          "status": "pass",
+          "unit": "seconds",
+          "desc": "Q0.2 从领卡到 done ≤30 分钟",
+          "note": "",
+          "sub": {}
+        },
+        "Q0.3": {
+          "value": 1.0,
+          "target": 0.8,
+          "direction": "ge",
+          "status": "pass",
+          "unit": "closure_rate",
+          "desc": "Q0.3 闭环成功率 ≥80%",
+          "note": "",
+          "sub": {}
+        }
+      }
+    },
+    "Q1": {
+      "value": 0,
+      "target": 1800,
+      "direction": "le",
+      "status": "pass",
+      "unit": "seconds",
+      "desc": "Q1 自治自愈时延",
+      "note": "no zombie evidence",
+      "sub": {
+        "Q1.1": {
+          "value": 0,
+          "target": 1800,
+          "direction": "le",
+          "status": "pass",
+          "unit": "seconds",
+          "desc": "Q1.1 僵尸回收延迟 ≤30 分钟",
+          "note": "",
+          "sub": {}
+        },
+        "Q1.2": {
+          "value": 0,
+          "target": 1,
+          "direction": "le",
+          "status": "pass",
+          "unit": "ticks",
+          "desc": "Q1.2 依赖放行延迟 ≤1 轮 tick",
+          "note": "",
+          "sub": {}
+        }
+      }
+    },
+    "Q2": {
+      "value": 0,
+      "target": 5,
+      "direction": "le",
+      "status": "pass",
+      "unit": "points",
+      "desc": "Q2 样板可复用性",
+      "note": "no fork audit",
+      "sub": {
+        "Q2.1": {
+          "value": 0,
+          "target": 5,
+          "direction": "le",
+          "status": "pass",
+          "unit": "points",
+          "desc": "Q2.1 fork 后改动点 ≤5",
+          "note": "",
+          "sub": {}
+        }
+      }
+    },
+    "Q3": {
+      "value": 0,
+      "target": 0,
+      "direction": "le",
+      "status": "pass",
+      "unit": "count",
+      "desc": "Q3 可信度地基",
+      "note": "no gate audit",
+      "sub": {
+        "Q3.1": {
+          "value": 0,
+          "target": 0,
+          "direction": "le",
+          "status": "pass",
+          "unit": "count",
+          "desc": "Q3.1 假绿数 = 0",
+          "note": "",
+          "sub": {}
+        },
+        "Q3.2": {
+          "value": 0.0,
+          "target": 1.0,
+          "direction": "ge",
+          "status": "fail",
+          "unit": "ratio",
+          "desc": "Q3.2 required check 负向测试覆盖率 = 100%",
+          "note": "",
+          "sub": {}
+        },
+        "Q3.3": {
+          "value": 1.0,
+          "target": 1.0,
+          "direction": "ge",
+          "status": "pass",
+          "unit": "bool",
+          "desc": "Q3.3 settings 与线上 ruleset 逐字一致",
+          "note": "",
+          "sub": {}
+        }
+      }
+    },
+    "Q4": {
+      "value": 1.0,
+      "target": 1.0,
+      "direction": "ge",
+      "status": "pass",
+      "unit": "ratio",
+      "desc": "Q4 强模型验收",
+      "note": "no claim evidence",
+      "sub": {
+        "Q4.1": {
+          "value": 1.0,
+          "target": 1.0,
+          "direction": "ge",
+          "status": "pass",
+          "unit": "ratio",
+          "desc": "Q4.1 进入修复的 claim 100% 有 REPRODUCED",
+          "note": "",
+          "sub": {}
+        },
+        "Q4.2": {
+          "value": 0.0,
+          "target": 1.0,
+          "direction": "le",
+          "status": "pass",
+          "unit": "ratio",
+          "desc": "Q4.2 被拒收 claim 比例可观测且下降",
+          "note": "",
+          "sub": {}
+        },
+        "Q4.3": {
+          "value": 0,
+          "target": 3,
+          "direction": "ge",
+          "status": "fail",
+          "unit": "count",
+          "desc": "Q4.3 固化为 checker 的 claim ≥3/季度",
+          "note": "",
+          "sub": {}
+        }
+      }
+    },
+    "Q5": {
+      "value": 0.0,
+      "target": 1.0,
+      "direction": "ge",
+      "status": "fail",
+      "unit": "composite",
+      "desc": "Q5 产品仓对齐与依赖升级",
+      "note": "no upgrade/pin evidence",
+      "sub": {
+        "Q5.1": {
+          "value": 1.0,
+          "target": 1.0,
+          "direction": "ge",
+          "status": "pass",
+          "unit": "bool",
+          "desc": "Q5.1 loop_version 落后主干 ≤2 tag 且 ≤30 天",
+          "note": "",
+          "sub": {}
+        },
+        "Q5.2": {
+          "value": 0,
+          "target": 0,
+          "direction": "le",
+          "status": "pass",
+          "unit": "count",
+          "desc": "Q5.2 loop 机制文件副本数 = 0",
+          "note": "",
+          "sub": {}
+        },
+        "Q5.3": {
+          "value": 0,
+          "target": 0,
+          "direction": "le",
+          "status": "pass",
+          "unit": "count",
+          "desc": "Q5.3 template-sync PR 豁免数 = 0",
+          "note": "",
+          "sub": {}
+        },
+        "Q5.4": {
+          "value": 0.0,
+          "target": 1.0,
+          "direction": "ge",
+          "status": "fail",
+          "unit": "ratio",
+          "desc": "Q5.4 依赖升级成功率",
+          "note": "",
+          "sub": {}
+        }
+      }
+    }
+  },
+  "failed": [
+    {
+      "metric": "Q5",
+      "value": 0.0,
+      "target": 1.0,
+      "direction": "ge",
+      "note": "no upgrade/pin evidence"
+    }
+  ]
+}
