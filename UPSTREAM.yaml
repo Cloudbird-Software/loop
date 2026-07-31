@@ -4,7 +4,10 @@
 # - 未登记进本文件的外部依赖 → gate/upstream-registered 直接红。
 # - 新版本必须过 policy.min_age_days 冷静期才允许自动升级。
 # - 永不从非官方源安装（spec-kit 只能从其 GitHub 仓库，不能从 PyPI 同名包）。
-# - 所有二进制的 sha256 由 W0 的 `loop upstream` 现场填（此处先占位 w0-fill）。
+# - 二进制的 sha256 由 W0 的 `loop upstream` 现场填；E 包/R11-3 已回填真实值
+#   （zizmor v1.0.0 无 GitHub 二进制 release 资产，标 unavailable 并附
+#   risk_accepted_by / why_unavailable；其余均对官方 release 资产逐个 sha256sum
+#   并与发布方 checksums 文件交叉核对一致）。
 #
 # 字段（每项必填）：name / seam / kind / pin / degrade_path
 #   kind=binary  → 必填 sha256
@@ -21,7 +24,7 @@ items:
   - name: github/spec-kit
     seam: C
     kind: cli
-    pin: "v0.0.0@w0-fill"
+    pin: "v0.14.1"                # R11-3 回填：真实 tag（v0.14.1，2026-07-23 发布，已过 7 天冷静期；v0.15.0 仅 1 天未过冷静期）
     install: "uvx --from git+https://github.com/github/spec-kit.git@<tag>"
     official_source_only: true       # 禁止从 PyPI 同名包安装
     degrade_path: "波次改用 waves/*.md 纯手写模板，analyze/checklist 降级为人工读"
@@ -63,69 +66,80 @@ items:
     seam: gate
     kind: binary
     pin: "1.0.0"
-    sha256: "w0-fill"
+    sha256: "unavailable"          # R11-3：v1.0.0 release 无二进制资产（见 why_unavailable）
+    risk_accepted_by: "R11-3 回填时确认：zizmor v1.0.0 GitHub release 无任何二进制资产，bootstrap 改走 pip install zizmor；二进制 sha256 缺位风险由 gate 升级到带二进制资产的版本后补回填承担"
+    why_unavailable: "zizmor v1.0.0（2025-01-02）发布时仅有 sdist/PyPI，无 linux-amd64 release asset；gh release view v1.0.0 返回 assets:[]。zizmor 自 v1.x 后期才提供 GitHub 二进制 release。"
     degrade_path: "workflow 变更强制 critical + 人工审 zizmor 输出"
 
   - name: suzuki-shunsuke/pinact
     seam: gate
     kind: binary
     pin: "0.1.0"
-    sha256: "w0-fill"
+    sha256: "4dbe0df0b103d46d45e34d6d8803e84a484bad83ef2e8668f905c10009f8a815"
     degrade_path: "改用 ensure-sha-pinned-actions + 人工逐条钉 SHA"
+    note: "R11-3 回填；sha256 对应 release v0.1.0 资产 pinact_linux_amd64.tar.gz，与 pinact_0.1.0_checksums.txt 交叉核对一致。"
 
   - name: gitleaks/gitleaks
     seam: gate
     kind: binary
     pin: "8.16.0"
-    sha256: "w0-fill"
+    sha256: "f8d4fabedaeaabd2a3e7e7b96394b8ddeff0be32941a1719aedee08fc8678601"
     degrade_path: "PR 关键路径退回 trufflehog --only-verified，密度下降但可阻断"
+    note: "R11-3 回填；sha256 对应 release v8.16.0 资产 gitleaks_8.16.0_linux_x64.tar.gz，与 gitleaks_8.16.0_checksums.txt 交叉核对一致。"
 
   - name: google/osv-scanner
     seam: gate
     kind: binary
     pin: "1.4.0"
-    sha256: "w0-fill"
+    sha256: "48e8ca1ed33ac6bb1adf3ee33d323519a2b4a8af4d59219aab0fcb03ff71de29"
     degrade_path: "deps-cve gate 降级为每日 Grype 单扫，不再双源交叉"
+    note: "R11-3 回填；sha256 对应 release v1.4.0 资产 osv-scanner_1.4.0_linux_amd64（裸二进制），与 osv-scanner_1.4.0_SHA256SUMS 交叉核对一致。"
 
   - name: anchore/syft
     seam: gate
     kind: binary
     pin: "0.100.0"
-    sha256: "w0-fill"
+    sha256: "0b9db5e79568dfe846abec744ff3f3e4d6aeef1a2e8c84a5cfe355c4d05e2b4a"
     degrade_path: "SBOM 用 osv-scanner 自带清单，丢失包级元数据"
+    note: "R11-3 回填；sha256 对应 release v0.100.0 资产 syft_0.100.0_linux_amd64.tar.gz，与 syft_0.100.0_checksums.txt 交叉核对一致。"
 
   - name: anchore/grype
     seam: gate
     kind: binary
     pin: "0.70.0"
-    sha256: "w0-fill"
+    sha256: "9d2743de7c6e7754a8e2bee6e8e8ee78619f68f212e4b006aa7a6b2f9831b99b"
     degrade_path: "漏洞匹配退回 osv-scanner 单源，无 EPSS/KEV 复合评分"
+    note: "R11-3 回填；sha256 对应 release v0.70.0 资产 grype_0.70.0_linux_amd64.tar.gz，与 grype_0.70.0_checksums.txt 交叉核对一致。"
 
   - name: trufflesecurity/trufflehog
     seam: gate
     kind: binary
     pin: "3.70.0"
-    sha256: "w0-fill"
+    sha256: "0af55cb34b698718ea2a00e0cd0dc152cd05cd47917babc1ad3b5489d470eaef"
     degrade_path: "全历史密钥扫描降频到每月一次；PR 阻塞仍靠 gitleaks"
+    note: "R11-3 回填；sha256 对应 release v3.70.0 资产 trufflehog_3.70.0_linux_amd64.tar.gz，与 trufflehog_3.70.0_checksums.txt 交叉核对一致。"
 
   # ── B 执行体配套（bootstrap 装的 CLI，loopd 依赖） ──
   - name: cli/cli
     seam: B
     kind: binary
     pin: "2.40.0"
-    sha256: "w0-fill"
+    sha256: "17f3c21f3f4c3b0175a9a0ee8f8e42e36f58e2713de81440ea9c0cb94c5a08a8"
     degrade_path: "gh CLI 不可用时 loopd 退回 git+REST API，CAS 写入降级"
+    note: "R11-3 回填；sha256 对应 release v2.40.0 资产 gh_2.40.0_linux_amd64.tar.gz，与 gh_2.40.0_checksums.txt 交叉核对一致。"
 
   - name: jdx/mise
     seam: B
     kind: binary
     pin: "2024.10.0"
-    sha256: "w0-fill"
+    sha256: "8dcab747a551a65d0c0e4366cfd0aa879cbeebbc77bbd6e930f0d1f513d72249"
     degrade_path: "loop verify 退回系统默认工具版本，沙盒绿/CI 红风险上升"
+    note: "R11-3 回填；本 sha256 是 https://mise.run 安装脚本自身的 sha256（bootstrap.sh 下载该脚本后做哈希校验再 bash 执行），NOT mise 二进制 release 资产的哈希。脚本为『最新版』快照，若上游改动则校验失败需人工复核后更新本值。mise 二进制 v2024.10.0 linux-x64.tar.gz 的官方 sha256 为 5955d861d8da449d4918f56707d4b445547d4cac3705e08240f5661c3a7cb97e（备查）。"
 
   - name: jqlang/jq
     seam: B
     kind: binary
     pin: "1.7.1"
-    sha256: "w0-fill"
+    sha256: "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"
     degrade_path: "JSON 处理改用 python -c，性能下降但功能等价"
+    note: "R11-3 回填；sha256 对应 release jq-1.7.1 资产 jq-linux-amd64（裸二进制），与 sha256sum.txt 交叉核对一致（jq-linux64 同哈希）。"

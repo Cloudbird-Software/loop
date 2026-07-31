@@ -83,11 +83,38 @@ def validate_refs(refs, items):
     return missing, placeholders
 
 
+def scan_placeholder_items(items):
+    """R11-3: 扫描 UPSTREAM.yaml 中【所有】条目，凡 sha256==w0-fill 或 pin 含 w0-fill
+    即记为 PLACEHOLDER_PIN_OR_SHA 违规（覆盖 diff 命中的之外的全部条目）。返回排序后的 name 列表。"""
+    out = []
+    for name, item in items.items():
+        if item.get("sha256") == "w0-fill" or "w0-fill" in str(item.get("pin", "")):
+            out.append(name)
+    return sorted(out)
+
+
+def scan_w0_fill_file(path="UPSTREAM.yaml"):
+    """R11-3: 全文扫描——UPSTREAM.yaml 只要残留任意 `w0-fill` 字面量即返回 True。
+    即使本次 diff 未触碰任何 deps，占位未回填也必须红（W0_FILL_PLACEHOLDER present）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return "w0-fill" in f.read()
+    except Exception:
+        return False
+
+
 def main():
     base = base_ref(); head = os.environ.get("GITHUB_SHA", "HEAD")
+    items = upstream_items()
     refs = refs_from_diff(base, head)
-    missing, placeholders = validate_refs(refs, upstream_items())
-    bad = [f"MISSING_UPSTREAM {r}" for r in missing] + [f"PLACEHOLDER_PIN_OR_SHA {r}" for r in placeholders]
+    missing, placeholders = validate_refs(refs, items)
+    # R11-3: 全量扫描所有条目的 w0-fill 占位（不止 diff 命中的依赖）
+    placeholder_all = scan_placeholder_items(items)
+    bad = [f"MISSING_UPSTREAM {r}" for r in missing]
+    bad += [f"PLACEHOLDER_PIN_OR_SHA {r}" for r in sorted(set(placeholders) | set(placeholder_all))]
+    # R11-3: 全文扫描——即使 diff 未动 deps，UPSTREAM.yaml 残留 w0-fill 即红
+    if scan_w0_fill_file("UPSTREAM.yaml"):
+        bad.append("W0_FILL_PLACEHOLDER present")
     if bad:
         print("FAIL: UPSTREAM_VIOLATION\n" + "\n".join(bad)); sys.exit(1)
     print(f"OK upstream registered for {len(refs)} touched deps")
