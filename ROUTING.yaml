@@ -42,13 +42,21 @@ routes:
     tier: critical
     provider: strongest
     model: gpt-5
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
   - domain: plan
     action: retro
     tier: standard
     provider: strongest
     model: gpt-5
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
 
   # 强模型验收（review 环，见 docs/强模型验收环.md）：
   # 产物只能是 .loop/schemas/claim.json 定义的可证伪断言，永不产 PASS/FAIL。
@@ -62,14 +70,22 @@ routes:
     provider: strongest
     model: gpt-5
     seam_b: copilot-cli
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
   # claim 的复现判定：必须与提出 claim 的模型异构（防自证，CHARTER N6）。
   - domain: review
     action: reproduce
     tier: "*"
     provider: qwen
     model: qwen3-max
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
 
   # 验证工（verify）：验证不通过 API 路由执行。
   # 决定（2026-07-30，用户裁定）：API LLM 只能输出文本，无法运行命令/测试，不能执行真实验证。
@@ -82,7 +98,11 @@ routes:
     tier: "*"
     provider: deepseek
     model: deepseek-chat
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
     status: deferred_to_verdict_ci_job
 
   # 实现工：trivial 走便宜档，standard/critical 走主力
@@ -91,13 +111,21 @@ routes:
     tier: trivial
     provider: qwen
     model: qwen-turbo
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
   - domain: impl
     action: "*"
     tier: standard
     provider: qwen
     model: qwen3-max
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
 
   # 审计工：只做归类，便宜档即可
   - domain: audit
@@ -105,4 +133,8 @@ routes:
     tier: "*"
     provider: qwen
     model: qwen-turbo
-    metrics: {}
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0

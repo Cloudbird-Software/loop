@@ -18,6 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CFG = None  # 路由表，main() / 测试注入
 
+# R12-7: review 域指标感知降权读 policy.yml（precision_floor / min_samples_for_demotion）
+_POLICY_PATH = os.environ.get(
+    "LOOP_POLICY_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "policy.yml"),
+)
+
 
 def _load(path):
     with open(path) as f:
@@ -31,6 +37,20 @@ def _load(path):
 
 def _key(env):
     return os.environ.get(env, "") if env else ""
+
+
+def _load_policy():
+    """读 policy.yml（review.precision_floor / review.min_samples_for_demotion）。
+
+    失败回落空 dict——此时降权判定用默认阈值（floor 0.5 / min_samples 10）。
+    与 _load 同风格：标准库 + 可选 PyYAML，绝不引入 litellm。
+    """
+    try:
+        import yaml
+        with open(_POLICY_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
 
 
 def resolve(domain, action, tier):
@@ -47,6 +67,92 @@ def resolve(domain, action, tier):
         d = CFG.get("default", {})
         return d.get("provider"), d.get("model")
     return best["provider"], best["model"]
+
+
+# ============================================================
+# R12-7: review 域指标感知降权（纯增量，不破坏既有 resolve 行为）
+# ============================================================
+def _route_metrics_for(provider, model, domain, action):
+    """从 CFG.routes 找匹配 (domain, action, provider, model) 的 route，返回其 metrics dict。
+
+    匹配规则与 resolve 同源（action 任一方为 "*" 即视为匹配）。无匹配返回 {}。
+    """
+    for r in CFG.get("routes", []):
+        if not isinstance(r, dict):
+            continue
+        ra = r.get("action", "*")
+        if r.get("provider") != provider or r.get("model") != model:
+            continue
+        if r.get("domain") != domain:
+            continue
+        if not (ra == action or ra == "*" or action == "*"):
+            continue
+        m = r.get("metrics", {}) or {}
+        return m if isinstance(m, dict) else {}
+    return {}
+
+
+def _review_min_samples(policy=None):
+    """读 policy.review.min_samples_for_demotion（默认 10）。"""
+    if policy is None:
+        policy = _load_policy()
+    review = policy.get("review", {}) if isinstance(policy, dict) else {}
+    if not isinstance(review, dict):
+        review = {}
+    try:
+        return int(review.get("min_samples_for_demotion", 10))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _review_precision_floor(policy=None):
+    """读 policy.review.precision_floor（默认 0.5）。"""
+    if policy is None:
+        policy = _load_policy()
+    review = policy.get("review", {}) if isinstance(policy, dict) else {}
+    if not isinstance(review, dict):
+        review = {}
+    try:
+        return float(review.get("precision_floor", 0.5))
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def resolve_with_demotion_check(domain, action, tier, policy=None):
+    """带指标感知的解析：review 域查 metrics，精度过低则回落 default provider。
+
+    非 review 域：行为与 resolve() 完全一致（纯增量，不破坏既有路由）。
+    review 域：读 route 的 metrics；
+      - claims_total < min_samples → 打印 INSUFFICIENT_SAMPLES，保留原路由（不降权）；
+      - claims_total >= min_samples 且 precision < floor → 记降权警告并回落到
+        default provider（R12-7：模型不确定性不能卡合并线，但可降权到默认档）。
+    """
+    provider, model = resolve(domain, action, tier)
+    if domain != "review" or not provider:
+        return provider, model
+    metrics = _route_metrics_for(provider, model, domain, action)
+    try:
+        total = int(metrics.get("claims_total", 0) or 0)
+    except (TypeError, ValueError):
+        total = 0
+    min_samples = _review_min_samples(policy)
+    if total < min_samples:
+        print("INSUFFICIENT_SAMPLES")
+        return provider, model
+    try:
+        precision = float(metrics.get("precision", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        precision = 0.0
+    floor = _review_precision_floor(policy)
+    if precision < floor:
+        sys.stderr.write(
+            f"DEMOTION_WARNING: review model {model} (provider={provider}) "
+            f"precision {precision} < floor {floor} over {total} samples; "
+            f"falling back to default provider\n"
+        )
+        d = CFG.get("default", {}) or {}
+        return d.get("provider"), d.get("model")
+    return provider, model
 
 
 def _forward(provider, body):
@@ -95,7 +201,8 @@ class H(BaseHTTPRequestHandler):
         domain = self.headers.get("X-Loop-Domain", "default")
         action = self.headers.get("X-Loop-Action", "chat")
         tier = self.headers.get("X-Loop-Tier", "standard")
-        prov, model = resolve(domain, action, tier)
+        # R12-7: review 域走指标感知解析（其它域与原 resolve 行为一致）
+        prov, model = resolve_with_demotion_check(domain, action, tier)
         if not prov or prov not in CFG.get("providers", {}):
             self._send(502, b'{"error":"no route"}')
             return
