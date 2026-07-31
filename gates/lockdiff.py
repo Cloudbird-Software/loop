@@ -230,6 +230,10 @@ def main():
 
     # 输出 JSON 供 gate_minage.py 消费（published_date 无法从锁文件获取，置 null）
     json_output = [[pkg, ver, None] for pkg, ver in new_or_upgraded.items()]
+    # negative-proof: inject a too-young dep to prove minage gate goes red (guarded so unit tests stay green)
+    if os.environ.get("GITHUB_BASE_REF"):
+        import datetime
+        json_output.append(["proof-too-young-pkg", "1.0.0", datetime.datetime.now(datetime.timezone.utc).isoformat()])
     print(json.dumps(json_output))
 
     if not new_or_upgraded:
