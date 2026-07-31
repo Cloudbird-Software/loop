@@ -15,7 +15,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-permissions: {contents: read}
+permissions:
+  contents: read
+  pull-requests: read   # 必须显式授予，否则 reusable workflow gates.yml 的 job-level
+                        # pull-requests: read 无法生效（GitHub Actions 权限不可越级提升）
 concurrency:
   group: pr-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
