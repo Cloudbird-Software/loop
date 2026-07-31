@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # loopd/bootstrap.sh —— 沙盒环境初始化（手册 2.2④ 调用）
-# 做四件事：装 gh/mise/jq → 落地 loopd.py/loop → clone product-x → 预热证据工具
+# 做四件事：装 gh/mise/jq → 落地 loopd.py → clone product-x → 预热证据工具
+# #52/#53：relay/filemode/run 远程命令通道已移除，loop shim 与 intents.yaml 不再部署。
 set -euo pipefail
 
 LOOP_ORG="${LOOP_ORG:?LOOP_ORG not set}"
@@ -86,18 +87,12 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 jq --version
 
-echo "=== [2/4] Deploy loopd + loop shim + intents.yaml ==="
-# 落地 intents.yaml 目录
-sudo mkdir -p /usr/local/etc/loopd
+echo "=== [2/4] Deploy loopd ==="
+# #52/#53：loop shim（relay 客户端）与 intents.yaml（run 白名单）已随远程命令通道移除，
+# 不再下载/安装。loopd 只作为守护进程部署（心跳/自动落盘/僵尸回收）。
 # 拉 loopd.py → /usr/local/bin/loopd（以 loopd 为名安装，使 loopd --daemon --role X 可直接执行）
 python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/loopd.py', '/tmp/loopd.py')"
 sudo install -m 0755 /tmp/loopd.py /usr/local/bin/loopd
-# 拉 loop shim → /usr/local/bin/loop
-python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/loop', '/tmp/loop')"
-sudo install -m 0755 /tmp/loop /usr/local/bin/loop
-# 拉 intents.yaml → /usr/local/etc/loopd/intents.yaml
-python3 -c "import urllib.request; urllib.request.urlretrieve('${RAW_BASE}/loopd/intents.yaml', '/tmp/intents.yaml')"
-sudo install -m 0644 /tmp/intents.yaml /usr/local/etc/loopd/intents.yaml
 # 直接检查 /usr/local/bin/loopd 存在且可执行（不再用 import loopd 探测，那依赖 cwd/PYTHONPATH 不可靠）
 if [ -x /usr/local/bin/loopd ]; then
   echo "loopd -> /usr/local/bin/loopd (executable)"
@@ -105,8 +100,6 @@ else
   echo "ERROR: /usr/local/bin/loopd not installed or not executable" >&2
   exit 1
 fi
-echo "loop -> $(command -v loop)"
-echo "intents.yaml -> /usr/local/etc/loopd/intents.yaml"
 
 echo "=== [3/4] Clone ${LOOP_REPO} to ${LOOP_WS} ==="
 if [ -d "${LOOP_WS}/.git" ]; then

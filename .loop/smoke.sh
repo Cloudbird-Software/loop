@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # .loop/smoke.sh — loopd 本地冒烟测试
-# 覆盖：py_compile / relay status / unknown verb / file mode / RETIRE / help
-# 只测 relay/IO/参数层，不触真实 GitHub。
+# 覆盖：py_compile / 远程通道移除回归 / GLOB / done+save / reaper / finding-propose-verdict / workflow 静态检查
+# #52/#53：relay/filemode/run 远程命令通道已移除，原 relay/file/run/shim/intents 冒烟阶段已替换为移除回归。
+# 不触真实 GitHub。
 set -uo pipefail
 
 PASS=0; FAIL=0
@@ -11,13 +12,12 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 LOOPD="${REPO_ROOT}/loopd/loopd.py"
-SHIM="${REPO_ROOT}/loopd/loop"
 
 # 临时环境
 TMPROOT=$(mktemp -d)
 TMPWS="${TMPROOT}/ws"
-mkdir -p "${TMPROOT}/.loop/relay/inbox" "${TMPROOT}/.loop/relay/outbox" "${TMPROOT}/.loop/relay/done" "${TMPROOT}/.loop/logs" "${TMPROOT}/.loop/trash" "${TMPROOT}/.loop/audit"
-mkdir -p "${TMPWS}/.loop/relay/inbox" "${TMPWS}/.loop/relay/outbox" "${TMPWS}/.loop/relay/done" "${TMPWS}/.loop/logs" "${TMPWS}/.loop/trash" "${TMPWS}/.loop/audit"
+mkdir -p "${TMPROOT}/.loop/logs" "${TMPROOT}/.loop/trash" "${TMPROOT}/.loop/audit"
+mkdir -p "${TMPWS}/.loop/logs" "${TMPWS}/.loop/trash" "${TMPWS}/.loop/audit"
 
 # 公共环境变量
 export LOOP_ROOT="${TMPROOT}"
@@ -34,7 +34,6 @@ export LOOP_HEARTBEAT_SEC=999
 export LOOP_AUTOSAVE_SEC=999
 export LOOP_NEXT_BLOCK_SEC=5
 export LOOP_BRANCH_PREFIX="agent"
-export LOOP_IO_MODE="shim"
 export GH_TOKEN="${GH_TOKEN:-dummy}"
 
 # init a fake git repo for WS so git commands don't fully fail
@@ -50,183 +49,76 @@ cleanup() {
 trap cleanup EXIT
 
 # ============================================================
-# a. py_compile
+# a. py_compile loopd.py（#52/#53：loop shim 已删除，不再编译）
 # ============================================================
-if python3 -m py_compile "${LOOPD}" "${SHIM}" 2>/dev/null; then
-  pass "a. py_compile loopd.py + loop"
+if python3 -m py_compile "${LOOPD}" 2>/dev/null; then
+  pass "a. py_compile loopd.py"
 else
-  fail "a. py_compile loopd.py + loop"
+  fail "a. py_compile loopd.py"
 fi
 
 # ============================================================
-# 启动 daemon（后续测试共用）
+# Stage B: 远程命令通道移除回归（#52/#53）
+#   relay_thread / filemode_thread / load_intents / h_run / run verb / loop shim / intents.yaml 全部应消失；
+#   往 .loop/IN.json 或 .loop/relay/inbox/ 丢 JSON 不应被消费。
+#   （与 tests/test_loopd_no_remote_intents.py 对齐的 bash 侧冒烟。）
 # ============================================================
-python3 "${LOOPD}" &
-DAEMON_PID=$!
-sleep 1  # 等线程起来
+echo ""
+echo "=== Stage B: remote channel removal (#52/#53) ==="
+# b0. loop shim + intents.yaml 文件已从仓库删除
+if [ ! -f "${REPO_ROOT}/loopd/loop" ]; then pass "b0. loopd/loop shim deleted"; else fail "b0. loopd/loop shim deleted"; fi
+if [ ! -f "${REPO_ROOT}/loopd/intents.yaml" ]; then pass "b0. loopd/intents.yaml deleted"; else fail "b0. loopd/intents.yaml deleted"; fi
 
-# ============================================================
-# b. relay status → code=0 within 3s
-# ============================================================
-RID="b-$(date +%s%N | tail -c 7)"
-REQ="{\"id\":\"${RID}\",\"intent\":\"status\",\"args\":[],\"cwd\":\"${TMPWS}\",\"ts\":$(date +%s)}"
-echo "${REQ}" > "${TMPROOT}/.loop/relay/inbox/${RID}.json"
-B_OK=0
-for i in $(seq 1 30); do  # 3 seconds, 100ms each
-  if [ -f "${TMPROOT}/.loop/relay/outbox/${RID}.json" ]; then
-    CODE=$(python3 -c "import json; print(json.load(open('${TMPROOT}/.loop/relay/outbox/${RID}.json'))['code'])" 2>/dev/null || echo "?")
-    if [ "${CODE}" = "0" ]; then B_OK=1; fi
-    break
-  fi
-  sleep 0.1
-done
-if [ "${B_OK}" = "1" ]; then pass "b. relay status returns code=0"; else fail "b. relay status returns code=0"; fi
+export SMOKE_LOOPD="${REPO_ROOT}/loopd"
+B_OUT=$(python3 - <<'PY'
+import os, sys, json, time, pathlib
+sys.path.insert(0, os.environ["SMOKE_LOOPD"])
+for m in ("loopd", "loopd.loopd"):
+    sys.modules.pop(m, None)
+import loopd
+results = []
+def chk(name, ok, detail=""):
+    results.append((name, ok, detail))
 
-# ============================================================
-# c. unknown verb → code=64, stderr contains UNKNOWN_VERB
-# ============================================================
-RID="c-$(date +%s%N | tail -c 7)"
-REQ="{\"id\":\"${RID}\",\"intent\":\"frobnicate\",\"args\":[],\"cwd\":\"${TMPWS}\",\"ts\":$(date +%s)}"
-echo "${REQ}" > "${TMPROOT}/.loop/relay/inbox/${RID}.json"
-C_OK=0
-for i in $(seq 1 30); do
-  if [ -f "${TMPROOT}/.loop/relay/outbox/${RID}.json" ]; then
-    CODE=$(python3 -c "import json; print(json.load(open('${TMPROOT}/.loop/relay/outbox/${RID}.json'))['code'])" 2>/dev/null || echo "?")
-    STDERR=$(python3 -c "import json; print(json.load(open('${TMPROOT}/.loop/relay/outbox/${RID}.json'))['stderr'])" 2>/dev/null || echo "")
-    if [ "${CODE}" = "64" ] && echo "${STDERR}" | grep -q "UNKNOWN_VERB"; then C_OK=1; fi
-    break
-  fi
-  sleep 0.1
-done
-if [ "${C_OK}" = "1" ]; then pass "c. unknown verb returns code=64 + UNKNOWN_VERB"; else fail "c. unknown verb returns code=64 + UNKNOWN_VERB"; fi
+# 1. run 不在 HANDLERS
+chk("run not in HANDLERS", "run" not in loopd.HANDLERS, str(sorted(loopd.HANDLERS)))
 
-# ============================================================
-# d. file mode: IN.json → OUT.md done
-# ============================================================
-# 先杀掉旧 daemon，换 file 模式重启
-kill "${DAEMON_PID}" 2>/dev/null; wait "${DAEMON_PID}" 2>/dev/null; DAEMON_PID=""
-sleep 0.5
+# 2. 远程通道符号已删除
+for sym in ("relay_thread", "filemode_thread", "load_intents", "h_run"):
+    chk(f"{sym} removed", not hasattr(loopd, sym))
 
-export LOOP_IO_MODE="file"
-# 清理旧 OUT.md
-rm -f "${TMPROOT}/.loop/OUT.md" "${TMPROOT}/.loop/IN.json"
+# 3. CFG() 不创建 .loop/relay 目录
+loopd.CFG()
+root = pathlib.Path(os.environ["LOOP_ROOT"])
+chk(".loop/relay not created by CFG()", not (root/".loop"/"relay").exists())
 
-python3 "${LOOPD}" &
-DAEMON_PID=$!
-sleep 1
+# 4. VERB_TABLE 不含 'run <intent>'
+chk("VERB_TABLE has no 'run <intent>'", "run <intent>" not in loopd.VERB_TABLE)
 
-# 写 IN.json
-echo '{"intent":"status","args":[]}' > "${TMPROOT}/.loop/IN.json"
-D_OK=0
-for i in $(seq 1 30); do
-  if [ -f "${TMPROOT}/.loop/OUT.md" ]; then
-    STATUS=$(head -1 "${TMPROOT}/.loop/OUT.md" 2>/dev/null || echo "")
-    if echo "${STATUS}" | grep -q "status: done"; then D_OK=1; fi
-    break
-  fi
-  sleep 0.1
-done
-if [ "${D_OK}" = "1" ]; then pass "d. file mode IN.json → OUT.md done"; else fail "d. file mode IN.json → OUT.md done"; fi
+# 5. .loop/IN.json drop 不被消费（无 filemode_thread → 无 OUT.md）
+loop_dir = root/".loop"
+(loop_dir/"IN.json").write_text(json.dumps({"id":"evil","intent":"save","args":["pwned"]}))
+time.sleep(0.3)
+chk("IN.json not consumed (no OUT.md)", not (loop_dir/"OUT.md").exists())
 
-# 杀掉 file-mode daemon
-kill "${DAEMON_PID}" 2>/dev/null; wait "${DAEMON_PID}" 2>/dev/null; DAEMON_PID=""
-sleep 0.5
+# 6. .loop/relay/inbox/ drop 不被消费（无 relay_thread → 文件仍在原地）
+inbox = loop_dir/"relay"/"inbox"
+inbox.mkdir(parents=True, exist_ok=True)
+(inbox/"evil.json").write_text(json.dumps({"id":"evil2","intent":"done","args":[]}))
+time.sleep(0.3)
+chk("relay inbox drop not consumed", (inbox/"evil.json").exists())
 
-# ============================================================
-# e. LOOP_MAX_CARDS_PER_SESSION=0 → next returns RETIRE
-# ============================================================
-export LOOP_IO_MODE="shim"
-export LOOP_MAX_CARDS_PER_SESSION="0"
-# 清理 relay
-rm -f "${TMPROOT}/.loop/relay/inbox/"*.json "${TMPROOT}/.loop/relay/outbox/"*.json 2>/dev/null
-
-python3 "${LOOPD}" &
-DAEMON_PID=$!
-sleep 1
-
-RID="e-$(date +%s%N | tail -c 7)"
-REQ="{\"id\":\"${RID}\",\"intent\":\"next\",\"args\":[],\"cwd\":\"${TMPWS}\",\"ts\":$(date +%s)}"
-echo "${REQ}" > "${TMPROOT}/.loop/relay/inbox/${RID}.json"
-E_OK=0
-for i in $(seq 1 30); do
-  if [ -f "${TMPROOT}/.loop/relay/outbox/${RID}.json" ]; then
-    STDOUT=$(python3 -c "import json; print(json.load(open('${TMPROOT}/.loop/relay/outbox/${RID}.json'))['stdout'])" 2>/dev/null || echo "")
-    if echo "${STDOUT}" | grep -q "RETIRE"; then E_OK=1; fi
-    break
-  fi
-  sleep 0.1
-done
-if [ "${E_OK}" = "1" ]; then pass "e. LOOP_MAX_CARDS_PER_SESSION=0 → next returns RETIRE"; else fail "e. LOOP_MAX_CARDS_PER_SESSION=0 → next returns RETIRE"; fi
-
-# ============================================================
-# f. loop help prints verb table
-# ============================================================
-# 通过 relay 发 help intent，检查输出含动词表关键行
-RID="f-$(date +%s%N | tail -c 7)"
-REQ="{\"id\":\"${RID}\",\"intent\":\"help\",\"args\":[],\"cwd\":\"${TMPWS}\",\"ts\":$(date +%s)}"
-echo "${REQ}" > "${TMPROOT}/.loop/relay/inbox/${RID}.json"
-F_OK=0
-for i in $(seq 1 30); do
-  if [ -f "${TMPROOT}/.loop/relay/outbox/${RID}.json" ]; then
-    STDOUT=$(python3 -c "import json; print(json.load(open('${TMPROOT}/.loop/relay/outbox/${RID}.json'))['stdout'])" 2>/dev/null || echo "")
-    # 检查动词表关键行
-    if echo "${STDOUT}" | grep -q "next" && \
-       echo "${STDOUT}" | grep -q "save" && \
-       echo "${STDOUT}" | grep -q "done" && \
-       echo "${STDOUT}" | grep -q "retire" && \
-       echo "${STDOUT}" | grep -q "status"; then F_OK=1; fi
-    break
-  fi
-  sleep 0.1
-done
-if [ "${F_OK}" = "1" ]; then pass "f. help prints verb table"; else fail "f. help prints verb table"; fi
-
-# ============================================================
-# g. 部署模拟：按 bootstrap 逻辑把 loopd/ 装进临时目录，
-#    loopd --daemon 能起、loop run logs.tail 不返回 UNKNOWN_INTENT
-# ============================================================
-# 先杀掉之前的 daemon，避免争抢同一个 relay inbox
-if [ -n "${DAEMON_PID:-}" ] && kill -0 "${DAEMON_PID}" 2>/dev/null; then
-  kill "${DAEMON_PID}" 2>/dev/null || true; wait "${DAEMON_PID}" 2>/dev/null || true
-fi
-DAEMON_PID=""
-
-DEPLOY="${TMPROOT}/deploy"
-mkdir -p "${DEPLOY}/bin" "${DEPLOY}/etc/loopd"
-install -m 0755 "${REPO_ROOT}/loopd/loopd.py" "${DEPLOY}/bin/loopd"
-install -m 0755 "${REPO_ROOT}/loopd/loop" "${DEPLOY}/bin/loop"
-install -m 0644 "${REPO_ROOT}/loopd/intents.yaml" "${DEPLOY}/etc/loopd/intents.yaml"
-
-# 用部署目录里的 loopd/loop（PATH 前置）；intents 走 LOOPD_INTENTS_PATH（第一候选）
-export PATH="${DEPLOY}/bin:${PATH}"
-export LOOPD_INTENTS_PATH="${DEPLOY}/etc/loopd/intents.yaml"
-# logs.tail 指向 .loop/logs/app.log（相对 WS），建一个空文件让 tail 成功
-touch "${TMPWS}/.loop/logs/app.log"
-# 清理 relay，避免残留请求干扰
-rm -f "${TMPROOT}/.loop/relay/inbox/"*.json "${TMPROOT}/.loop/relay/outbox/"*.json 2>/dev/null
-
-# g1. loopd --daemon 能起
-loopd --daemon &
-DAEMON_PID=$!
-sleep 1
-if kill -0 "${DAEMON_PID}" 2>/dev/null; then
-  pass "g1. loopd --daemon starts (deployed binary)"
+for name, ok, detail in results:
+    print(("PASS " if ok else "FAIL ")+name+("" if ok else f" :: {detail}"))
+print("STAGE_B_" + ("OK" if all(r[1] for r in results) else "FAIL"))
+PY
+)
+echo "${B_OUT}"
+if echo "${B_OUT}" | grep -q "STAGE_B_OK" && ! echo "${B_OUT}" | grep -q "FAIL"; then
+  pass "b. remote channel removed (run/relay/filemode/intents/shim)"
 else
-  fail "g1. loopd --daemon starts (deployed binary)"
+  fail "b. remote channel removed (run/relay/filemode/intents/shim)"
 fi
-
-# g2. loop run logs.tail 不返回 UNKNOWN_INTENT（走部署的 loop shim + loopd daemon）
-G2_OUT=$(loop run logs.tail 2>&1 || true)
-if echo "${G2_OUT}" | grep -q "UNKNOWN_INTENT"; then
-  fail "g2. loop run logs.tail not UNKNOWN_INTENT"
-else
-  pass "g2. loop run logs.tail not UNKNOWN_INTENT"
-fi
-
-# 杀掉部署 daemon，还原 PATH / LOOPD_INTENTS_PATH，避免影响后续静态检查
-kill "${DAEMON_PID}" 2>/dev/null || true; wait "${DAEMON_PID}" 2>/dev/null || true; DAEMON_PID=""
-export PATH="${PATH#${DEPLOY}/bin:}"
-unset LOOPD_INTENTS_PATH
 
 # ============================================================
 # Stage G2: GLOB path-match regression (v0.1.6, dir/** wildcard fix)
@@ -336,6 +228,7 @@ os.environ["LOOP_IO_MODE"]="shim"
 os.environ["GH_TOKEN"]="dummy"
 sys.path.insert(0, "${REPO_ROOT}/loopd")
 import loopd
+loopd.CFG()  # 物化 REPO/WS/SID/MODEL 等裸全局，否则 h_done/st 引用它们会 NameError
 loopd.st(card={"num": 99, "blk":{"id":"h1-test","state":"claimed","paths":["h1/**"],"tier":"trivial","role":"impl","charter":["G0"],"attempt":0,"acceptance":["x"]}})
 subprocess.run(["git","-C","${TMPWS}","checkout","-q","-b","agent/h1-test"],check=True)
 out = loopd.h_done([])
@@ -379,6 +272,7 @@ os.environ["GH_TOKEN"]="dummy"
 os.environ["PATH"]="${GHSHIM}:" + os.environ["PATH"]
 sys.path.insert(0, "${REPO_ROOT}/loopd")
 import loopd
+loopd.CFG()  # 物化 WS 等裸全局，否则 do_save 引用 WS 会 NameError（原 h2 因 try/except 静默假绿）
 loopd.st(card={"num": 88, "blk":{"id":"h2-test","state":"claimed","paths":["h2/in/**"],"tier":"trivial","role":"impl","charter":["G0"],"attempt":0,"acceptance":["x"]}})
 try:
     loopd.do_save("wip h2")
@@ -464,6 +358,8 @@ echo ""
 echo "=== Stage F: pinned-SHA checks ==="
 
 # f-a. every uses: line pins a 40-char SHA (offline proxy for pinact run --check)
+# 只认 YAML 里的 uses 键（`uses:` / `- uses:`），避免误伤 workflow 内嵌 Python run 块里
+# 出现的 "uses:" 字面量（如 pr-ci.yml 自带的 pin 检查脚本）。
 F_A=1
 while IFS= read -r line; do
   # extract the action ref after "uses:" up to the comment
@@ -473,7 +369,7 @@ while IFS= read -r line; do
     echo "  FAIL: unpinned uses -> $line"
     F_A=0
   fi
-done < <(grep -rhE 'uses:' "${REPO_ROOT}/.github/workflows/" 2>/dev/null)
+done < <(grep -rhE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]' --include='*.yml' --include='*.yaml' "${REPO_ROOT}/.github/workflows/" 2>/dev/null)
 if [ "${F_A}" = "1" ]; then pass "f-a. all uses: pinned to 40-char SHA"; else fail "f-a. unpinned uses: found"; fi
 
 # f-b. pinact run --check if available + token present
@@ -513,6 +409,7 @@ os.environ["LOOP_IO_MODE"]="shim"
 os.environ["GH_TOKEN"]="dummy"
 sys.path.insert(0, os.environ.get("SMOKE_LOOPD","/workspace/loopd"))
 import loopd
+loopd.CFG()  # 物化 REPO 等裸全局，否则 reap_once 引用 REPO 会 NameError
 
 class FakeProc:
     def __init__(self, stdout="", stderr="", rc=0):
@@ -611,6 +508,7 @@ root = pathlib.Path(os.environ["LOOP_ROOT"])
 (root/".loop").mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, os.environ.get("SMOKE_LOOPD","/workspace/loopd"))
 import loopd
+loopd.CFG()  # 物化 WS 等裸全局，否则 h_finding/h_propose 引用 WS 会 NameError
 
 results = []
 class FakeProc:
