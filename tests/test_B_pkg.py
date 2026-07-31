@@ -130,13 +130,13 @@ if args[:2]==["pr","list"]:
 
 # -------- run list --------
 if args[:2]==["run","list"]:
-    out(json.dumps([{{"createdAt": (datetime.datetime.utcnow()-datetime.timedelta(hours=1)).isoformat()+"Z", "conclusion":"success"}}]))
+    out(json.dumps([{{"createdAt": (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)-datetime.timedelta(hours=1)).isoformat()+"Z", "conclusion":"success"}}]))
 
 # -------- api dispatch --------
 if len(args)>=3 and args[0]=="api" and "dispatches" in args[1]:
     try: ev=json.load(open(DISPATCH_FILE))
     except Exception: ev=[]
-    ev.append(dict(args=args, ts=datetime.datetime.utcnow().isoformat()))
+    ev.append(dict(args=args, ts=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()))
     json.dump(ev, open(DISPATCH_FILE,"w"))
     out("{{}}")
 
@@ -222,7 +222,7 @@ ok("TC-AUDIT-2 日配额 quota_left == policy 上限",
 # ---------------- AUDIT-3 throttle ----------------
 clear_audit()
 st = T._load_audit_state()
-now_ts = int(datetime.datetime.utcnow().timestamp())
+now_ts = int(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).timestamp())
 # 14 天内 5 开 1 采纳 → 0.2 < 0.35
 for i in range(5):
     st["adoption_log"].append({"ts": now_ts - 86400 * i, "event": "opened"})
@@ -284,13 +284,13 @@ INBOX_DIR.mkdir(parents=True, exist_ok=True)
 gripe_issue = {
     "number": 1, "title": "GRIPE BOX", "state": "open",
     "labels": [{"name":"gripe"}],
-    "updatedAt": datetime.datetime.utcnow().isoformat()+"Z",
-    "createdAt": datetime.datetime.utcnow().isoformat()+"Z",
+    "updatedAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
+    "createdAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
     "body": "吐槽箱\n",
     "comments": [
         {"id":99,"author":{"login":"human"},
          "body":"这按钮没反应",
-         "createdAt":datetime.datetime.utcnow().isoformat()+"Z"}
+         "createdAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z"}
     ],
 }
 # Finding issue（带 label finding）
@@ -301,8 +301,8 @@ fblk = {
 finding_issue = {
     "number": 2, "title": "F-001 密钥扫描风险", "state":"open",
     "labels":[{"name":"finding"},{"name":"high"}],
-    "updatedAt": datetime.datetime.utcnow().isoformat()+"Z",
-    "createdAt": datetime.datetime.utcnow().isoformat()+"Z",
+    "updatedAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
+    "createdAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
     "body": make_card_body(fblk),
 }
 # Incident issue（带 label incident）
@@ -310,8 +310,8 @@ ibl = {"schema":1,"id":"I-1","severity":"critical","state":"open"}
 incident_issue = {
     "number": 3, "title": "Incident: canary 断链", "state":"open",
     "labels":[{"name":"incident"}],
-    "updatedAt": datetime.datetime.utcnow().isoformat()+"Z",
-    "createdAt": datetime.datetime.utcnow().isoformat()+"Z",
+    "updatedAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
+    "createdAt": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
     "body": make_card_body(ibl),
 }
 STATE_FILE_ISSUES.write_text(json.dumps([gripe_issue, finding_issue, incident_issue], ensure_ascii=False))
@@ -349,7 +349,7 @@ ok("TC-INBOX-1 5 份 JSON 字段名对齐 P3 输入清单", all_ok)
 
 # ---------------- SILENT 48h ----------------
 STATE_FILE_DISPATCHES.write_text("[]")
-long_ago = (datetime.datetime.utcnow() - datetime.timedelta(hours=49)).isoformat()+"Z"
+long_ago = (datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(hours=49)).isoformat()+"Z"
 STATE_FILE_PRS.write_text(json.dumps([{
     "number": 100,
     "title": "WAVE-2026W30 提案",
@@ -374,29 +374,29 @@ race_a = {
     "paths":["migrations/**"],"role":"impl","attempt":0,
     "sandbox":"impl-A","model":"A","claim_id":"A-racer",
     "pr_branch": f"agent/{cid}-A",
-    "heartbeat_at": int(datetime.datetime.utcnow().timestamp())-1,
+    "heartbeat_at": int(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).timestamp())-1,
 }
 race_b = {
     "schema":1,"id":cid,"tier":"critical","state":"in_review",
     "paths":["migrations/**"],"role":"impl","attempt":0,
     "sandbox":"impl-B","model":"B","claim_id":"B-racer",
     "pr_branch": f"agent/{cid}-B",
-    "heartbeat_at": int(datetime.datetime.utcnow().timestamp()),
+    "heartbeat_at": int(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).timestamp()),
 }
 STATE_FILE_ISSUES.write_text(json.dumps([
-    {"number":200,"title":cid+" A","state":"open","labels":[],"updatedAt":datetime.datetime.utcnow().isoformat()+"Z",
-     "createdAt":datetime.datetime.utcnow().isoformat()+"Z","body":make_card_body(race_a)},
-    {"number":201,"title":cid+" B","state":"open","labels":[],"updatedAt":datetime.datetime.utcnow().isoformat()+"Z",
-     "createdAt":datetime.datetime.utcnow().isoformat()+"Z","body":make_card_body(race_b)},
+    {"number":200,"title":cid+" A","state":"open","labels":[],"updatedAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
+     "createdAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z","body":make_card_body(race_a)},
+    {"number":201,"title":cid+" B","state":"open","labels":[],"updatedAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
+     "createdAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z","body":make_card_body(race_b)},
 ], ensure_ascii=False))
 # 两份 PR：A diff 大 (changedFiles=12)，B diff 小 (3)
 STATE_FILE_PRS.write_text(json.dumps([
     {"number":301,"state":"open","headRefName":f"agent/{cid}-A","changedFiles":12,
      "additions":300,"deletions":120,
-     "updatedAt":datetime.datetime.utcnow().isoformat()+"Z"},
+     "updatedAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z"},
     {"number":302,"state":"open","headRefName":f"agent/{cid}-B","changedFiles":3,
      "additions":60,"deletions":20,
-     "updatedAt":datetime.datetime.utcnow().isoformat()+"Z"},
+     "updatedAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z"},
 ], ensure_ascii=False))
 MOCK_LOG.write_text("")
 T.race_mode_handler()
@@ -419,11 +419,11 @@ def mkcard(num, cid, tier, so, attempt, paths, state="closed", vr=False, charter
         "verify":{"required":vr},
         "charter": charter or ["G1"],
     }
-    cre = datetime.datetime.utcnow()-datetime.timedelta(days=cre_days)
+    cre = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)-datetime.timedelta(days=cre_days)
     return {"number":num,"title":cid,"state":state,
             "labels":[{"name":tier}],
             "createdAt":cre.isoformat()+"Z",
-            "updatedAt":datetime.datetime.utcnow().isoformat()+"Z",
+            "updatedAt":datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).isoformat()+"Z",
             "body":make_card_body(blk)}
 
 cards = []

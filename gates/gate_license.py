@@ -55,7 +55,7 @@ def dep_name_from_line(path, line):
     if name == "go.mod":
         m = re.match(r"(?:require\s+)?([A-Za-z0-9_.-]+/[A-Za-z0-9_.\-/]+)\s+v?\d", line); return (m.group(1) if m else None)
     if name == "package.json":
-        m = re.match(r'"(@?[^"/]+(?:/[^"/]+)?)"\s*:\s*"', line); return (m.group(1) if m else None)
+        m = re.match(r'\s*"(@?[^"/]+(?:/[^"/]+)?)"\s*:\s*"', line); return (m.group(1) if m else None)
     if name in {"Cargo.toml", "pyproject.toml"}:
         m = re.match(r'([A-Za-z0-9_.-]+)\s*=\s*["{]', line); return (m.group(1).lower() if m else None)
     return None

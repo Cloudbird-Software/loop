@@ -86,6 +86,35 @@ jobs:
             .loop/retro/llm_attribution_*.json
             .loop/retro/prev_action_items.json
           retention-days: 90
+      - name: Run wave acceptance（R14-2：真实验收结果）
+        id: wave_accept
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set -e
+          python conductor/wave_acceptance.py --wave WAVE-14 --json > .loop/retro/wave_acceptance.json
+          PASSED=$(python -c "import json,sys; d=json.load(open('.loop/retro/wave_acceptance.json')); print('true' if d.get('passed') else 'false')")
+          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+          echo "::notice::WAVE-14 acceptance passed=$PASSED"
+
+      - name: Notify wave result（R14-2：通知送达）
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOOP_ROOT: ${{ github.workspace }}
+          LOOP_REPO: ${{ github.event.repository.name }}
+          LOOP_ORG: ${{ github.repository_owner }}
+        run: |
+          set -e
+          PASSED="${{ steps.wave_accept.outputs.passed }}"
+          python conductor/notify.py wave-result \
+            --wave WAVE-14 \
+            --passed "$PASSED" \
+            --detail "$(cat .loop/retro/wave_acceptance.json)"
+
       - name: Repository dispatch → plan-ops（LLM 归因通道，adapter stub）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,10 +124,11 @@ jobs:
           # fake-green-ok: plan-ops 归因通道是非阻塞的旁路事件，失败不应让 retro 作业红
           set +e
           WEEK=$(date -u +%GW%V)
+          STATUS="${{ steps.wave_accept.outputs.passed }}"
           gh api repos/${{ github.repository }}/dispatches \
             -X POST \
             -f event_type=plan-ops-retro-attribution \
             -f "client_payload[week]=$WEEK" \
             -f "client_payload[adapter]=plan-ops" \
-            -f "client_payload[status]=stub_pending" \
+            -f "client_payload[status]=$STATUS" \
             || echo "plan-ops dispatch skipped (adapter stub; no fatal if network fails)"

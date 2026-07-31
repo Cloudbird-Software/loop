@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "run_id": null,
+  "repository": "Cloudbird-Software/product-probe",
+  "start_time": null,
+  "end_time": null,
+  "duration_days": 7,
+  "human_interventions": 0,
+  "events": [],
+  "metrics": {
+    "first_ci_pass_rate": null,
+    "reopen_count": null,
+    "avg_diff_lines": null,
+    "single_card_cost_yuan": null
+  },
+  "charter_q_metrics": null,
+  "conclusion": "pending",
+  "blockers": [],
+  "evidence_dir": ".loop/evidence/e2e"
+}

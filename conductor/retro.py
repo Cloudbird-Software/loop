@@ -285,16 +285,26 @@ def q5_prev_action_items_landed(prev_items):
     n = len(prev_items)
     landed = 0; partial = 0; missed = 0
     evidence = []
+    # 查近 7 天 git log 是否含上周行动项的 expected keyword
+    try:
+        p = subprocess.run(
+            ["git", "log", "--oneline", "--since", "1 week ago"],
+            cwd=str(LOOP_ROOT), capture_output=True, text=True)
+        git_log = p.stdout or ""
+    except Exception:
+        git_log = ""
     for key, item in prev_items.items():
         expected_kw = item.get("expected_change_sha_or_keyword", "")
-        # 简化版：查 git log 是否含关键词（此处 stub，标记"半"）
-        # 真实版：subprocess.run(["git","log","--oneline","-50"]) 搜
         if expected_kw:
-            evidence.append(f"{key}: 半 — 未验证（journal mirror 或 git log 未检查到）")
-            partial += 1
+            if expected_kw in git_log:
+                landed += 1
+                evidence.append(f"{key}: 有 — git log 含 {expected_kw!r}")
+            else:
+                partial += 1
+                evidence.append(f"{key}: 半 — git log 未检查到 {expected_kw!r}")
         else:
-            evidence.append(f"{key}: 有 — expected 字段为空视为落地")
             landed += 1
+            evidence.append(f"{key}: 有 — expected 字段为空视为落地")
     status = "checked"
     return {"status": status, "n": n, "landed": landed, "partial": partial, "missed": missed, "evidence": evidence}
 

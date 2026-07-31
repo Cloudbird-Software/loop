@@ -266,7 +266,7 @@ def h_verify(args):
     verify_sh = WS/".loop"/"verify.sh"
     if not verify_sh.exists():
         # 没有 verify.sh = 卡片未声明本地验收脚本 = 视为通过（不是"跳过"）。
-        # 历史上这里返回 SKIPPED，被 agent 误读为"没过、需补 verify.sh"导致越界造文件（见 docs/点火测试剧本.md §5 F-1 备注）。
+        # 历史上这里返回 SKIPPED，被 agent 误读为"没过、需补 verify.sh"导致越界造文件（见 docs/archive/点火测试剧本.md §5 F-1 备注）。
         return {"stdout": "PASS (no verify.sh declared for this card)\n"}
     logdir = WS/".loop"/"logs"; logdir.mkdir(parents=True, exist_ok=True)
     logf = logdir / f"verify-{int(time.time())}.log"

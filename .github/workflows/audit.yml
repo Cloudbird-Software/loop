@@ -104,8 +104,8 @@ jobs:
                   script_sh = LOOP / 'lenses' / f'{lens}.sh'
                   script_md = LOOP / 'lenses' / f'{lens}.md'
                   if not script_sh.exists():
-                      print(f'shard {sid} lens {lens}: no script, skip')
-                      continue
+                      print(f'::error::shard {sid} lens {lens}: LENS_NOT_EXECUTED: script {script_sh} missing')
+                      sys.exit(1)
                   # 喂给 lens 的证据 JSON（标准化输入）
                   evidence_in = {
                       'lens': lens, 'shard': sid,
@@ -154,15 +154,23 @@ jobs:
                           continue  # 超配额，跳过
                       if is_new:
                           state['daily_new_findings'] += 1
-                          # 生成临时编号（实际由 issue create 回写）
-                          meta['finding_id'] = meta.get('finding_id',
-                                                        abs(hash(fp)) % 1_000_000)
+                          # R14-1: 创建真实 GitHub issue，用 issue number 作为 finding_id
+                          try:
+                              sys.path.insert(0, str(LOOP))
+                              from conductor import findings as F
+                              issue_num = F.open_finding(
+                                  fp, lens, sid, meta['severity'], meta['occurrences'], r0)
+                              meta['finding_id'] = issue_num
+                          except Exception as e:
+                              print(f'::error::open_finding failed for fp={fp}: {e}')
+                              sys.exit(1)
                           state['adoption_log'].append({
                               'ts': int(datetime.datetime.utcnow().timestamp()),
-                              'event': 'opened', 'fp': fp})
+                              'event': 'opened', 'fp': fp, 'issue': meta['finding_id']})
                           NEW_FINDINGS.append({
                               'fp': fp, 'lens': lens, 'shard': sid,
                               'severity': meta['severity'], 'occurrences': meta['occurrences'],
+                              'finding_id': meta['finding_id'],
                               'raw': r0})
                   _save_audit_state(state)
                   QUOTA_RUNS.append({'shard': sid, 'lens': lens,
