@@ -17,15 +17,78 @@ except ImportError:
     from blocks import extract_block, inject_block
 
 E = os.environ
-REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
-ORG = E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))
+
+
+def _env(env):
+    """Return the env mapping to resolve config from (os.environ by default).
+
+    Lets the resolution helpers be unit-tested with a hand-rolled env dict,
+    without re-importing the module and without touching the network.
+    """
+    return E if env is None else env
+
+
+def _resolve_org(env):
+    """LOOP_ORG with GITHUB_REPOSITORY_OWNER as default (preserves original semantics)."""
+    return env.get("LOOP_ORG", env.get("GITHUB_REPOSITORY_OWNER", ""))
+
+
+def resolve_loop_root(env=None):
+    """Resolve the loop workspace root.
+
+    Priority: LOOP_ROOT > GITHUB_WORKSPACE > /workspace fallback.
+    A *relative* path is resolved relative to cwd (made absolute) so that
+    local/dev runs (`LOOP_ROOT=.`) and Actions checkouts
+    (`GITHUB_WORKSPACE=<abs>`) share one code path; an *absolute* path is
+    used as-is.
+
+    CI 里 /workspace 不存在且不可写（曾导致 audit_shard_rotate _save_audit_state
+    PermissionError）；优先用 GITHUB_WORKSPACE（Actions checkout 目录），其次沙盒的
+    LOOP_ROOT，最后 /workspace 兜底。
+    """
+    env = _env(env)
+    raw = env.get("LOOP_ROOT") or env.get("GITHUB_WORKSPACE") or "/workspace"
+    p = pathlib.Path(raw)
+    if not p.is_absolute():
+        p = pathlib.Path.cwd() / p
+    return p
+
+
+def resolve_repo(env=None):
+    """Product repo as '<ORG>/<REPO>', purely env-driven.
+
+    LOOP_ORG (or GITHUB_REPOSITORY_OWNER) + LOOP_REPO. Defaults to
+    '<ORG>/product-x' when LOOP_REPO is unset — i.e. the same single tick.py
+    serves product-x simply by setting LOOP_REPO=product-x, and loop itself by
+    setting LOOP_REPO=loop. No fork needed.
+    """
+    env = _env(env)
+    return f"{_resolve_org(env)}/{env.get('LOOP_REPO', 'product-x')}"
+
+
+def resolve_control_repo(env=None):
+    """Control-plane repo (canary/scribe/nightly-rubric/audit/conductor run here, NOT the product repo).
+
+    Priority: LOOP_CONTROL_REPO > GITHUB_REPOSITORY > <ORG>/loop.
+    liveness_check must query here, otherwise every tick opens 4 spurious
+    "no X runs found" Incidents onto product-x.
+
+    NOTE — 收归说明 (card R11-6): product-x 之前携带一份与 loop 分叉的 tick.py
+    副本（约 25 行实质差异：LOOP_ROOT 解析、独立的 CONTROL_REPO 变量、product-x
+    侧多出的 canary stub）。这些分支差异现已全部由环境变量驱动
+    (LOOP_CONTROL_REPO / LOOP_ORG / LOOP_REPO)，本文件不再保留任何 product-x
+    专属的硬编码分叉。因此 product-x 可以删除其 fork（见 R13-4）并直接消费 loop
+    的这一份单一 tick.py 实现服务两仓。
+    """
+    env = _env(env)
+    return env.get("LOOP_CONTROL_REPO") or env.get("GITHUB_REPOSITORY") or f"{_resolve_org(env)}/loop"
+
+
+ORG = _resolve_org(E)
+REPO = resolve_repo(E)
 POLICY_FILE = E.get("LOOP_POLICY", "policy.yml")
-# CI 里 /workspace 不存在且不可写（曾导致 audit_shard_rotate _save_audit_state PermissionError）；
-# 优先用 GITHUB_WORKSPACE（Actions checkout 目录），其次沙盒的 LOOP_ROOT，最后 /workspace 兜底。
-LOOP_ROOT = pathlib.Path(E.get("LOOP_ROOT") or E.get("GITHUB_WORKSPACE") or "/workspace")
-# 控制面仓库：canary/scribe/nightly-rubric/audit/conductor 都跑在 loop（非 product-x）。
-# liveness_check 必须查这里，否则每轮误开 4 张 "no X runs found" Incident 到 product-x。
-CONTROL_REPO = E.get("LOOP_CONTROL_REPO") or E.get("GITHUB_REPOSITORY") or f"{ORG}/loop"
+LOOP_ROOT = resolve_loop_root(E)
+CONTROL_REPO = resolve_control_repo(E)
 
 # --- tier 判定：命中这些模式自动 critical ---
 CRITICAL_PATTERNS = [
@@ -728,9 +791,24 @@ def race_mode_handler():
 # ==================================================================
 # main
 # ==================================================================
-def main():
+def main(argv=None):
+    """Run one control-plane tick.
+
+    Pass argv=['--dry-run'] (or run `python conductor/tick.py --dry-run`) to
+    print the resolved config (REPO / CONTROL_REPO / LOOP_ROOT / POLICY_FILE)
+    and exit BEFORE any gh calls — no network required. Used to evidence that
+    the single tick.py serves both repos purely via env/config (card R11-6).
+    """
+    args = list(argv) if argv is not None else sys.argv[1:]
     now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     print(f"=== conductor tick @ {now.isoformat()} ===")
+    if "--dry-run" in args:
+        print(f"[dry-run] REPO={REPO}")
+        print(f"[dry-run] CONTROL_REPO={CONTROL_REPO}")
+        print(f"[dry-run] LOOP_ROOT={LOOP_ROOT}")
+        print(f"[dry-run] POLICY_FILE={POLICY_FILE}")
+        print("[dry-run] exiting before any gh calls (no network).")
+        return
     print(f"repo: {REPO}, policy: {POLICY_FILE}")
     zombie_reclaim()
     escalate()
