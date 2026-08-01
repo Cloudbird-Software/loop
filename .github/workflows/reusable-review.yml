@@ -180,6 +180,14 @@ jobs:
             echo "should_skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Mint App token
+        id: t
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.CONDUCTOR_APP_ID }}
+          private-key: ${{ secrets.CONDUCTOR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
       # ============================================================
       # 预算护栏（policy.review.max_reviews_per_day）。
       # 枚举今日完成的 review 运行数（按 workflowName 含 "review" 过滤，产品仓薄壳名不固定）。
@@ -189,7 +197,7 @@ jobs:
         id: budget
         if: success() && steps.onboard.outputs.should_skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ steps.t.outputs.token }}
         run: |
           set -euo pipefail
           TODAY=$(date -u +%Y-%m-%d)

@@ -71,12 +71,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install PyYAML
 
+      - name: Mint App token
+        id: t
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.CONDUCTOR_APP_ID }}
+          private-key: ${{ secrets.CONDUCTOR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Run gates via run_gates.py
         env:
           # LOOP_ROOT 指向 loop checkout；run_gates.py 的 search_dirs 含 ${LOOP_ROOT}/gates。
           LOOP_ROOT: ${{ github.workspace }}/.loop-control
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ steps.t.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.t.outputs.token }}
         run: |
           set -euo pipefail
           # --root . 把 gate 执行根指向产品仓（当前 checkout 根）；

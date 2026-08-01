@@ -12,8 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: t
-        run: |
-          echo "token=${{ secrets.SCRIBE_GH_TOKEN }}" >> "$GITHUB_OUTPUT"
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.CONDUCTOR_APP_ID }}
+          private-key: ${{ secrets.CONDUCTOR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Export full snapshot
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
@@ -89,14 +92,14 @@ jobs:
           fi
       - name: Commit snapshot to journal repo + push second remote
         env:
-          GH_TOKEN: ${{ secrets.SCRIBE_GH_TOKEN }}
+          GH_TOKEN: ${{ steps.t.outputs.token }}
           JOURNAL_REPO: ${{ vars.JOURNAL_REPO }}
           JOURNAL_MIRROR_URL: ${{ vars.JOURNAL_MIRROR_URL }}
           LOOP_ORG: ${{ github.repository_owner }}
         run: |
           set -e
           test -n "$JOURNAL_REPO" || { echo "ERROR: vars.JOURNAL_REPO not set"; exit 1; }
-          test -n "$GH_TOKEN"    || { echo "ERROR: secrets.SCRIBE_GH_TOKEN not set"; exit 1; }
+          test -n "$GH_TOKEN"    || { echo "ERROR: App token not minted (CONDUCTOR_APP_ID/KEY not set)"; exit 1; }
           TODAY=$(date -u +%Y-%m-%d)
           TS=$(date -u +%Y%m%dT%H%M%SZ)
           cd /tmp

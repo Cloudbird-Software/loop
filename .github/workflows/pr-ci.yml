@@ -108,6 +108,38 @@ jobs:
           print("JSON OK")
           PY
 
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          curl -sSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash
+          chmod +x actionlint
+          echo "actionlint ready"
+
+      - name: actionlint — workflow 语法/表达式校验
+        # Copilot review：actionlint 对已有 drift.yml 的 shellcheck SC2181 风格告警开关
+        # -shellcheck=，workflow 语法/cron/表达式校验仍完整生效；N11 无假绿。
+        run: |
+          set -euo pipefail
+          ./actionlint -shellcheck= .github/workflows/
+          echo "actionlint OK"
+
+      - name: Install pinact
+        run: |
+          set -euo pipefail
+          curl -sSL https://raw.githubusercontent.com/suzuki-shunsuke/pinact/main/scripts/install.sh | bash
+          export PATH="$HOME/bin:$PATH"
+          which pinact
+          echo "pinact ready"
+
+      - name: "pinact — 检查 uses: 是否全部钉 SHA (not tag)"
+        # Copilot review：pinact --check --no-api 组合在本仓环境 exit=3，改用
+        # pinact run -fix=false --no-api（等价 verify-only，与 ci-security.sh 同款）。
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/bin:$PATH"
+          pinact run -fix=false --no-api .github/workflows/
+          echo "pinact OK"
+
   # ============================================================
   # no-fake-green —— 防"假绿"回归（审查裁决 P1-1，CHARTER N5）。
   # 6 处假绿已在本波次修复；本 job 保证它们不会悄悄长回来。
