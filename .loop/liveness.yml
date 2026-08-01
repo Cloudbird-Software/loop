@@ -1,0 +1,23 @@
+# .loop/liveness.yml — cron 期望周期登记（W0-2）
+# 每个 workflow 的期望运行间隔；超期由 tick/drift 检测开 Incident。
+# 消费方：conductor/tick.py liveness_check + W0-5 digest。
+# 顶层 ticks 键为权威契约（W0-5 AC-3: assert 'ticks' in d）。
+ticks:
+  - name: template-sync
+    expect_hours: 30
+  - name: audit
+    expect_hours: 30
+  - name: upgrade
+    expect_hours: 180
+  - name: tick
+    expect_hours: 1
+  - name: canary
+    expect_hours: 2
+  - name: drift
+    expect_hours: 8
+  - name: scribe
+    expect_hours: 30
+  - name: nightly-rubric
+    expect_hours: 30
+  - name: policy
+    expect_hours: 168
