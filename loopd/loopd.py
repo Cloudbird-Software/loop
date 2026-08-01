@@ -161,12 +161,39 @@ def render_card(it, blk):
 # ============================================================
 
 # ============================================================
+# 会话内最大可领卡数（产品策略 policy.yml + 环境变量）
+# ============================================================
+def _max_cards_per_session():
+    """会话内最多可领卡数。优先级：env LOOP_MAX_CARDS_PER_SESSION（合法正整数）
+    > policy.yml 的 execute.max_cards_per_session > 兜底 1。
+
+    policy.yml 只用标准库 re 解析（不 import yaml，loopd 运行环境不一定装 PyYAML）。
+    任何解析失败都返回兜底 1，绝不让失败覆盖 env 的有效值。
+    """
+    ev = E.get("LOOP_MAX_CARDS_PER_SESSION")
+    if ev:
+        try:
+            n = int(ev)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    try:
+        txt = (CFG()["WS"] / "policy.yml").read_text()
+        m = re.search(r"max_cards_per_session\s*:\s*(\d+)", txt)
+        if m:
+            return max(1, int(m.group(1)))
+    except Exception:
+        pass
+    return 1
+
+# ============================================================
 # next：阻塞取卡 + CAS 领卡 + 路径租约（手册 5.3）
 # ============================================================
 @intent("next")
 def h_next(args):
     d = st()
-    if d["session_ordinal"] >= int(E.get("LOOP_MAX_CARDS_PER_SESSION", 1)):
+    if d["session_ordinal"] >= _max_cards_per_session():
         return {"stdout": "RETIRE\n"}
     deadline = time.time() + int(E.get("LOOP_NEXT_BLOCK_SEC", 60))
     while time.time() < deadline:
