@@ -1,0 +1,46 @@
+# LOOP Control Plane — Mechanism paths require human review (N16/N17/N18)
+# All mechanism files MUST have @randypanding as CODEOWNER.
+# Non-mechanism paths (docs/, tests/, etc.) fall through to default org ownership.
+
+# === Mechanism paths: loopd itself ===
+/loopd/                                  @randypanding
+
+# === Conductor: orchestration logic ===
+/conductor/                              @randypanding
+
+# === Gates: enforcement layer ===
+/gates/                                  @randypanding
+
+# === Lenses: inspection layer ===
+/lenses/                                 @randypanding
+
+# === Prompts: agent interaction contracts ===
+/prompts/                                @randypanding
+
+# === Policy / routing / products ===
+/policy.yml                              @randypanding
+/ROUTING.yaml                            @randypanding
+/products.yml                            @randypanding
+
+# === GitHub workflows: CI/CD ===
+/.github/workflows/                      @randypanding
+
+# === Charter and decision records ===
+/CHARTER.md                              @randypanding
+/DECISIONS.md                            @randypanding
+
+# === Settings as code (ruleset真源, N5 drift detection) ===
+/settings/                               @randypanding
+
+# === Loop internal state ===
+/.loop/                                  @randypanding
+
+# === Mechanism root: AGENTS.md is the AI entrypoint ===
+/AGENTS.md                               @randypanding
+
+# === Lockfiles and version pins ===
+/UPSTREAM.yaml                           @randypanding
+/requirements.txt                        @randypanding
+
+# === Contracts / schemas ===
+/contracts/                              @randypanding
