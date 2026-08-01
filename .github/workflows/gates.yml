@@ -55,6 +55,7 @@ jobs:
 
       - name: Run gates via run_gates.py
         env:
+          LOOP_ROOT: ${{ github.workspace }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
