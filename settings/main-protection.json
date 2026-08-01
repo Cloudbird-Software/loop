@@ -50,28 +50,36 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "loop-ci"
+            "context": "loop-ci",
+            "integration_id": 15368
           },
           {
-            "context": "loop-gates"
+            "context": "loop-gates",
+            "integration_id": 15368
           },
           {
-            "context": "lint"
+            "context": "lint",
+            "integration_id": 15368
           },
           {
-            "context": "test"
+            "context": "test",
+            "integration_id": 15368
           },
           {
-            "context": "verify"
+            "context": "verify",
+            "integration_id": 15368
           },
           {
-            "context": "contract"
+            "context": "contract",
+            "integration_id": 15368
           },
           {
-            "context": "paths-lease"
+            "context": "paths-lease",
+            "integration_id": 15368
           },
           {
-            "context": "verdict-binding"
+            "context": "verdict-binding",
+            "integration_id": 15368
           }
         ]
       }
@@ -86,6 +94,31 @@
         "min_entries_to_merge_wait_minutes": 5,
         "grouping_strategy": "ALLGREEN",
         "check_response_timeout_minutes": 60
+      }
+    },
+    {
+      "type": "code_quality",
+      "parameters": {
+        "severity": "errors"
+      }
+    },
+    {
+      "type": "code_scanning",
+      "parameters": {
+        "code_scanning_tools": [
+          {
+            "tool": "CodeQL",
+            "security_alerts_threshold": "medium_or_higher",
+            "alerts_threshold": "errors_and_warnings"
+          }
+        ]
+      }
+    },
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": false,
+        "review_draft_pull_requests": false
       }
     }
   ],
