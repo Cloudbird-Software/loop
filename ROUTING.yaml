@@ -111,7 +111,7 @@ routes:
       precision: 0.0
     status: deferred_to_verdict_ci_job
 
-  # 实现工：trivial 走便宜档，standard/critical 走主力
+  # 实现工：trivial 走便宜档，standard 走主力，critical 走最强
   - domain: impl
     action: "*"
     tier: trivial
@@ -130,6 +130,16 @@ routes:
     model: qwen3-max
     metrics:
       # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
+  - domain: impl
+    action: "*"
+    tier: critical
+    provider: strongest
+    model: gpt-5
+    metrics:
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
