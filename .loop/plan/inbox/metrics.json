@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-08-01T06:41:36.144538",
+  "seven_days_iso": "2026-07-25T06:41:36.144538",
+  "first_ci_pass_rate": 0.85,
+  "reopen_count_7d": 0,
+  "avg_diff_lines": 250,
+  "avg_card_minutes": 45,
+  "human_interventions_7d": 0,
+  "finding_adoption_rate_14d": 0.55,
+  "self_inflicted_rate_30d": 0.15,
+  "pin_compliance_rate": 1.0,
+  "min_age_waivers_7d": 0,
+  "prompt_eval_pass_rate": 0.92,
+  "canary_7d": {
+    "runs": 0,
+    "p95_ms": 0,
+    "failures": 0
+  },
+  "prev_wave": {
+    "promised": 14,
+    "landed": 12,
+    "reopened": 1
+  }
+}
