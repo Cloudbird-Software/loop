@@ -71,7 +71,17 @@ CAS 字段：`claim_id` = `{SID}-{uuid8}`，写入 card block 的 `claim_id` 字
 >
 > 两者都允许任何能写 `.loop/relay/` 或 `.loop/IN.json` 的进程执行白名单命令（含 `run <intent>` 的 shell 兜底），是不鉴权的命令执行面。#52/#53 已删除 `relay_thread` / `filemode_thread` / `load_intents` / `h_run` / `loop` shim / `intents.yaml`，并停止创建 `.loop/relay/` 目录。
 >
-> **现状**：loopd 仅作为守护进程运行（`main()` 启动心跳 / 自动落盘 / 僵尸回收线程），状态持久化在 `.loop/daemon.json`。暂行期 agent 不经 loopd CLI 取卡，直接用 gh/git 按 `cards/WORKFLOW.md` 推进；正式 loopd 体系的命令传输层待后续以鉴权方案重建（见 `docs/issue去留裁决-2026-07-30.md` #52）。往 `.loop/IN.json` 或 `.loop/relay/inbox/` 丢 JSON 不会被消费（见 `tests/test_loopd_no_remote_intents.py`）。
+> **现状（W0 过渡期）**：loopd CLI 入口仍处于 BROKEN-01 状态——`main()` 只启动守护
+> 线程后 `sleep(3600)`，16 个动词已通过 `@intent` 装饰器注册到 `HANDLERS`，但
+> `main()` 无 `argv` 派发逻辑，命令行不可调用。W0-1/W1-1 卡将修复此问题
+> （`main(argv)` 派发 + `CFG()` 物化 + 16 动词统一结构化 JSON 输出）。
+>
+> 过渡期 agent 不经 loopd CLI 取卡，直接用 gh/git 按 `waves/WAVE-XX.md` 中的
+> `json loop` 块推进状态。`cards/WORKFLOW.md` 已过时（cards/ 目录已冻结），
+> 不再作为流程参考。正式 loopd 体系的命令传输层待 W1 修复后以鉴权方案重建。
+>
+> 往 `.loop/IN.json` 或 `.loop/relay/inbox/` 丢 JSON 不会被消费
+> （见 `tests/test_loopd_no_remote_intents.py`）。
 
 ---
 

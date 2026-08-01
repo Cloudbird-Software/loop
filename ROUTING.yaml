@@ -43,6 +43,7 @@ routes:
     provider: strongest
     model: gpt-5
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -53,17 +54,19 @@ routes:
     provider: strongest
     model: gpt-5
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
       precision: 0.0
 
-  # 强模型验收（review 环，见 docs/强模型验收环.md）：
+  # 强模型验收环（见 docs/强模型验收环.md）：
   # 产物只能是 .loop/schemas/claim.json 定义的可证伪断言，永不产 PASS/FAIL。
-  # 本路由永不做 required check——模型不确定性不能卡合并线。
-  # ★开发期间暂不启用（2026-07-30 用户裁定）：Copilot CLI 的 token 暂不开通，
-  #   改为通过 GitHub Action 调用 copilot。等 WAVE-12 推进到建立该 Action 时再自然开启。
-  #   开发期间不跑强模型验收，不影响其他波次。
+  # 本路由永不做 required check——模型不确定性不能卡合并线（N9.7）。
+  # ★过渡期（W0-W3）暂不启用：
+  #   - W1 前保持 status: deferred
+  #   - W3 后（信号保真度层达标+Pass^k 有数）重新评估是否启用
+  #   - review.enabled 已在 policy.yml 中设为 false
   - domain: review
     action: accept
     tier: critical
@@ -71,6 +74,7 @@ routes:
     model: gpt-5
     seam_b: copilot-cli
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -82,6 +86,7 @@ routes:
     provider: qwen
     model: qwen3-max
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -99,6 +104,7 @@ routes:
     provider: deepseek
     model: deepseek-chat
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -112,6 +118,7 @@ routes:
     provider: qwen
     model: qwen-turbo
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -122,6 +129,7 @@ routes:
     provider: qwen
     model: qwen3-max
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
@@ -134,6 +142,7 @@ routes:
     provider: qwen
     model: qwen-turbo
     metrics:
+      # TODO: 首次运行后由 conductor 回填。当前全 0 是初始状态，不代表模型精度为 0。
       claims_total: 0
       claims_reproduced: 0
       claims_refuted: 0
