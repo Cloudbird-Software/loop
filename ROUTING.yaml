@@ -105,7 +105,7 @@ routes:
       precision: 0.0
     status: deferred_to_verdict_ci_job
 
-  # 实现工：trivial 走便宜档，standard/critical 走主力
+  # 实现工：trivial 走便宜档，standard 走主力，critical 走最强
   - domain: impl
     action: "*"
     tier: trivial
@@ -121,6 +121,16 @@ routes:
     tier: standard
     provider: qwen
     model: qwen3-max
+    metrics:
+      claims_total: 0
+      claims_reproduced: 0
+      claims_refuted: 0
+      precision: 0.0
+  - domain: impl
+    action: "*"
+    tier: critical
+    provider: strongest
+    model: gpt-5
     metrics:
       claims_total: 0
       claims_reproduced: 0
