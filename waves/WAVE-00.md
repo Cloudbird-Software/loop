@@ -11,6 +11,8 @@
 - [x] 标签就位：needs-human / evidence-fraud / placebo-gate / rhg-watch / state-tamper / metric-incident
 - [ ] `waves/WAVE-00/evidence/` 目录就位（由 W0-3 创建）
 - [ ] 根 CODEOWNERS 就位（机制路径 → @randypanding）— W0-6 负责创建
+- [ ] 人类：启用 loop-main-protection ruleset enforcement（当前为 disabled，见 loop #157）
+- [ ] 人类：在 product-x Settings 补齐 required_status_checks（当前仅 2 道，应 6 道：lint/test/verify/contract/paths-lease/verdict-binding）
 
 ## 卡包发放表（W0）
 
@@ -175,7 +177,8 @@
   "acceptance": [
     "AC-1: cat .github/CODEOWNERS 包含机制路径（loopd/conductor/gates/lenses/prompts/policy.yml/CHARTER/settings 等）→@randypanding",
     "AC-2: jq '.rules[] | select(.type==\"pull_request\") | .parameters.require_code_owner_review' settings/loop-main-protection.json 返回 true",
-    "AC-3: jq '.rules[] | select(.type==\"pull_request\") | .parameters.required_approving_review_count' settings/main-protection.json 返回 1"
+    "AC-3: jq '.rules[] | select(.type==\"pull_request\") | .parameters.required_approving_review_count' settings/main-protection.json 返回 1",
+    "AC-4: loop #157 drift 已解决（gate/settings-roundtrip 对比本地与线上零差异）或人类已标记为预期过渡态"
   ],
   "blocked_by": [],
   "model_hint": "gpt-5",
