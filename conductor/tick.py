@@ -919,6 +919,13 @@ def _gather_degradations():
         for t in ticks:
             name = t.get("name","")
             expect = t.get("expect_hours", 0)
+            # W0-5 类型守卫（Copilot review）：_load_liveness_config 在 PyYAML 可用时
+            # 会原样返回非整数 expect_hours（如字符串），直接 expect <= 0 会抛
+            # TypeError 中断 digest。强制转 int，转换失败则按 0 跳过该项。
+            try:
+                expect = int(expect)
+            except (TypeError, ValueError):
+                expect = 0
             if not name or expect <= 0: continue
             # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致。
             try:

@@ -7,7 +7,8 @@
 conductor.* 其它模块复用、可被 tests/ 覆盖，且与 conductor/tick.py 共享同一份
 sys.path 修复（W0-3 根因修复）。
 
-行为与原 heredoc 完全一致（逐字搬运，未改语义）：
+行为与原 heredoc 基本一致，唯一有意加强：lens 脚本非 0 退出也计入失败（N11
+不静默吞错，Copilot review 建议采纳）。
   - 读 .loop/audit/today_shards.json（由 tick.audit_shard_rotate 产出）
   - 逐 shard：git diff --name-only last_audited_sha..HEAD 取变更路径
   - 逐 lens：调 lenses/<lens>.sh <ev_in.json> <ev_out.json>，解析结果

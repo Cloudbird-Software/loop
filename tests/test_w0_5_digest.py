@@ -11,7 +11,7 @@
 
 运行：python tests/test_w0_5_digest.py
 """
-import json, os, sys, tempfile, pathlib, importlib
+import os, sys, tempfile, pathlib, importlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 WORKSPACE = HERE.parent
@@ -32,7 +32,12 @@ from conductor import tick as T
 
 
 def _reload_tick_with_root(root):
-    """重新 import tick 使其 LOOP_ROOT 指向 root（模块级常量在 import 时绑定）。"""
+    """重新 import tick 使其 LOOP_ROOT 指向 root（模块级常量在 import 时绑定）。
+
+    reload 前 显式更新 LOOP_ROOT 环境变量，确保 tick.resolve_loop_root() 在
+    重新加载时读到新值（Copilot review：原实现未用 root 参数，docstring 与行为不符）。
+    """
+    os.environ["LOOP_ROOT"] = str(root)
     importlib.reload(T)
 
 
@@ -105,6 +110,29 @@ def test_liveness_non_integer_expect_hours():
 
 
 # ==================================================================
+# TC-LIV-4: _gather_degradations 遇到非整数 expect_hours 不 crash
+#   Copilot review: expect <= 0 若 expect 是字符串会 TypeError 中断 digest。
+#   修复后强制 int() 转换，转换失败按 0 跳过该项。
+# ==================================================================
+def test_degradations_non_integer_expect_no_crash():
+    _reload_tick_with_root(TMP)
+    lp = TMP / ".loop" / "liveness.yml"
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    lp.write_text("ticks:\n  - name: bad\n    expect_hours: abc\n")
+    setup_template(TMP, "{{degradations}}")
+    # monkeypatch gh 返回空 run 列表，聚焦验证类型守卫而非网络
+    orig_gh = T.gh
+    T.gh = lambda *a, **kw: type("R", (), {"stdout": "[]", "stderr": "", "returncode": 0})()
+    try:
+        T.generate_digest()  # 不应抛 TypeError
+    finally:
+        T.gh = orig_gh
+    out = TMP / ".loop" / "HUMAN-TODO.md"
+    assert out.exists(), "digest should still be written despite non-integer expect_hours"
+    print("TC-LIV-4 PASS: non-integer expect_hours in degradations does not crash digest")
+
+
+# ==================================================================
 # TC-DIG-1: 模板缺失 → 优雅降级（打印提示，不抛异常）
 # ==================================================================
 def test_digest_template_missing():
@@ -113,9 +141,12 @@ def test_digest_template_missing():
     tpl = TMP / ".loop" / "templates" / "human-todo.md"
     if tpl.exists():
         tpl.unlink()
-    # 不应抛异常
-    T.generate_digest()
+    # 清掉前序测试可能残留的输出文件，避免误判
     out = TMP / ".loop" / "HUMAN-TODO.md"
+    if out.exists():
+        out.unlink()
+    # 不应抛异常，且不应生成输出文件
+    T.generate_digest()
     assert not out.exists(), "HUMAN-TODO.md should NOT be written when template missing"
     print("TC-DIG-1 PASS: missing template → graceful degradation, no exception, no output file")
 
@@ -192,6 +223,7 @@ if __name__ == "__main__":
         test_liveness_normal_parse,
         test_liveness_missing_file,
         test_liveness_non_integer_expect_hours,
+        test_degradations_non_integer_expect_no_crash,
         test_digest_template_missing,
         test_digest_normal_render,
         test_digest_gh_failure_tolerant,
