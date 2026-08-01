@@ -206,12 +206,18 @@ def write_block(num, blk):
     return True
 
 def open_issue(kind, title, body, labels=None):
-    args = ["issue","create","-R",REPO,"--title",title,"--body",body]
+    args = ["issue","create","-R",CONTROL_REPO,"--title",title,"--body",body]
     if labels:
         for lab in labels:
             args += ["--label", lab]
-    gh(*args)
-    print(f"  → opened {kind}: {title}")
+    try:
+        gh(*args, check=True)
+        print(f"  → opened {kind}: {title}")
+    except subprocess.CalledProcessError as e:
+        print(f"  → FAILED to open {kind}: {title}")
+        if e.stderr:
+            for line in e.stderr.strip().split("\n")[-3:]:
+                print(f"    | {line}")
 
 def open_incident(title, body):
     open_issue("Incident", title, body, labels=["incident"])
