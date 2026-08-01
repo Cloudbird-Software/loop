@@ -1,0 +1,96 @@
+name: card-lease
+# 卡片防绕过屏障 —— 独立 workflow，独立 check。
+#
+# 背景：loopd 的领卡/终验屏障在 loopd 进程内部，AI 可直接用 gh/git 绕过。
+# 本 workflow 在 CI 层面强制：PR 分支名必须匹配 agent/<card_id>[/suffix]
+# 或 loop/card/<card_id> 模式，且该卡在 origin/main 的 waves/*.md 上
+# 状态必须为 claimed / in_progress / in_review / done。
+# 本文件独立于 pr-ci，使"流程治理"与"代码质量"检查职责分离。
+#
+# 铁律：不在 loopd/ 内加任何屏障；屏障只在 CI 层面实现。
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  card-lease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # 需要 fetch-depth 以访问 origin/main
+
+      - name: 提取 CARD_ID 并校验分支命名
+        id: extract
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          echo "PR source branch: $BRANCH"
+          # 支持分支命名：agent/<card_id>[/suffix] | loop/card/<card_id> | agent/card/<card_id>
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/.*)?$#\3#p')
+          if [[ -z "$CARD_ID" ]]; then
+            echo "FAIL: no card branch — '$BRANCH' does not match ^(agent|loop)/(card/)?<card_id>[/suffix]$"
+            echo "Only loopd-created branches are allowed to create PRs on this repo."
+            echo "card_id=" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "card_id=$CARD_ID" >> "$GITHUB_OUTPUT"
+          echo "Extracted CARD_ID=$CARD_ID from branch '$BRANCH'"
+
+      - name: 从 origin/main 查卡 state
+        run: |
+          set -euo pipefail
+          CARD_ID="${{ steps.extract.outputs.card_id }}"
+          echo "Checking card '$CARD_ID' on origin/main..."
+          python - <<'PY'
+          import re, json, sys, subprocess, os
+
+          card_id = os.environ.get('CARD_ID', '')
+          if not card_id:
+              print("FAIL: CARD_ID environment variable not set")
+              sys.exit(1)
+          all_blocks = []
+
+          # 列出 origin/main 上的所有 waves/*.md
+          result = subprocess.run(
+              ['git', 'ls-tree', '-r', '--name-only', 'origin/main', 'waves/'],
+              capture_output=True, text=True
+          )
+          wave_files = [f for f in sorted(result.stdout.splitlines()) if f.endswith('.md')]
+
+          for wave_file in wave_files:
+              r = subprocess.run(
+                  ['git', 'show', f'origin/main:{wave_file}'],
+                  capture_output=True, text=True
+              )
+              if r.returncode != 0:
+                  continue
+              all_blocks.extend(re.findall(r'```json loop\n(.*?)\n```', r.stdout, re.DOTALL))
+
+          target = None
+          for block in all_blocks:
+              try:
+                  data = json.loads(block)
+                  if data.get('id') == card_id:
+                      target = data
+                      break
+              except json.JSONDecodeError:
+                  pass
+
+          if not target:
+              print(f"FAIL: card '{card_id}' not found in any waves/*.md on main")
+              sys.exit(1)
+
+          state = target.get('state', '')
+          allowed = {'claimed', 'in_progress', 'in_review', 'done'}
+          if state not in allowed:
+              print(f"FAIL: card '{card_id}' state is '{state}', must be one of {sorted(allowed)}")
+              sys.exit(1)
+          print(f"OK: card '{card_id}' state='{state}' — lease verified on main")
+          PY
+        env:
+          CARD_ID: ${{ steps.extract.outputs.card_id }}

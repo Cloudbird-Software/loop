@@ -14,6 +14,29 @@
 - 人类操作手册（执行化）：`loop控制面建设-人类操作手册.md`
 - 架构改造结论（为什么）：`loop架构改造最终结论与工程建议.md`
 
+## CI 防绕过屏障（card-lease）
+
+本仓库有一个独立的 GitHub Actions workflow `.github/workflows/card-lease.yml`，
+它作为 **required status check** 强制验证：**每个 PR 分支名必须匹配
+`agent/<card_id>[/suffix]` 或 `loop/card/<card_id>` 格式，且该卡必须在
+`origin/main` 的 `waves/*.md` 上处于 `claimed` / `in_progress` / `in_review` / `done` 状态。
+
+**这意味着**：
+- 你不能用 `git checkout -b <任意名>` 绕过 loopd 领卡
+- 你必须用 `loopd next` 领卡（它会创建合法分支并在 main 上登记状态）
+- 如果你绕过 loopd 直接操作，PR 上的 `card-lease` check 会变红，无法合并
+- 本屏障是 CI 层面的，不是 loopd 进程内的。即使你能手动 git push，PR 也会被 GitHub 规则卡住
+
+**合法分支命名示例**：
+- `agent/W0-1/e-test`（过渡期）
+- `loop/card/W0-1`（规范形态）
+- `agent/card/W0-1`
+
+**非法分支命名示例**：
+- `feature/add-login`
+- `fix/bug-123`
+- `my-branch`
+
 ## 你的角色
 
 会话开始时你不知道自己该当什么角色——角色由 `LOOP_ROLE` 与你领到的卡的 `role` 字段共同决定。
@@ -51,8 +74,9 @@
 - `CHARTER.md` 的 N 段（红线，不随产品变化）—— AI 不得改。
 - `policy.yml` 的 gate 集合与 `review.required_check: false`（CHARTER N9.7：强模型验收永不做 required check）。
 - `settings/*.json`（分支保护 ruleset 真源，CHARTER N5：不自动修正，只检测漂移开 Incident）。
-- `.github/workflows/audit.yml`、`conductor/findings.py`、`conductor/retro.py`、`conductor/upgrade_ring.py`、
+- `.github/workflows/audit.yml`、`.github/workflows/card-lease.yml`、`conductor/findings.py`、`conductor/retro.py`、`conductor/upgrade_ring.py`、
   `bench/metrics.py`、`loopd/loopd.py`、`conductor/loop_pin.py` —— 承重文件，改动须走对应卡片授权。
+  特别是 `card-lease.yml` 是 CI 防绕过屏障，禁止在 `loopd/` 内部加屏障替代。
 - `cards/`（已冻结只读归档，ADR-011）—— 不得手改，状态推进只走 `loopd`。
 - `products.yml`（产品仓注册表，CHARTER N10：AI 不得自行增删）。
 - `flags.yml`、`exceptions.yml`（即 `.loop/exceptions.yml`）、`UPSTREAM.yaml`。

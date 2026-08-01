@@ -49,6 +49,38 @@ jobs:
           python -m pytest -q -W error::DeprecationWarning
 
   # ============================================================
+  # verify —— 卡片自身的验收脚本（.loop/verify.sh）。
+  # 独立提取 CARD_ID（与 card-lease.yml 相同正则），不依赖跨 workflow 输出。
+  # ============================================================
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip PyYAML
+      - name: Run card verify
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/.*)?$#\3#p')
+          if [[ -z "$CARD_ID" ]]; then
+            echo "SKIP: no card branch — cannot identify card for verify"
+            exit 0
+          fi
+          if [[ -f .loop/verify.sh ]]; then
+            echo "Running .loop/verify.sh for card $CARD_ID..."
+            bash .loop/verify.sh
+          else
+            echo "SKIP: .loop/verify.sh not present — card $CARD_ID has no declared verify script"
+          fi
+
+  # ============================================================
   # lint —— 语法与静态自检。不引入任何新的第三方 linter。
   # ============================================================
   lint:

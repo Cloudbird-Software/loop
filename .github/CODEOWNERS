@@ -16,6 +16,8 @@
 /waves/                  @randypanding
 /settings/               @randypanding
 /.github/workflows/      @randypanding
+#   card-lease.yml：CI 防绕过屏障，禁止在 loopd/ 内部加屏障
+#   pr-ci.yml：PR 代码质量检查集
 
 # 单文件机制真源
 
