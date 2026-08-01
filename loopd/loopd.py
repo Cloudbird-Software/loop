@@ -9,6 +9,21 @@ E 包高强度测试修复：环境变量缺失时 --help/--version 仍能工作
 import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime, sys
 
 # ============================================================
+# W1-1：退出码常量 + 统一 JSON 输出口
+# ============================================================
+EXIT_OK = 0
+EXIT_REFUSED = 10
+EXIT_GATE = 11
+EXIT_UNKNOWN_VERB = 64
+EXIT_CRASH = 70
+EXIT_ENV = 78
+
+def _emit(obj, code=EXIT_OK):
+    """统一 JSON 输出唯一出口：print(json.dumps(...)) 并返回退出码。"""
+    print(json.dumps(obj, ensure_ascii=False))
+    return code
+
+# ============================================================
 # 全局常量（手册 5.1）—— 全部用 .get() 给默认值，--help 不崩
 # ============================================================
 def _env(): return os.environ
@@ -874,9 +889,14 @@ Verbs:
 禁止元字符：&& || ; | > >> < $() `` * ? ~
 """
 
+# W1-1：16 个已知动词（AC-2），供 help 输出、未知动词判定复用
+VERBS = ["next", "save", "verify", "done", "drop", "reset", "ask",
+         "evidence", "finding", "propose", "verdict", "upstream",
+         "retire", "status", "tick", "help"]
+
 @intent("help")
 def h_help(args):
-    return {"stdout": VERB_TABLE}
+    return {"verbs": VERBS, "count": len(VERBS)}
 
 # ============================================================
 # 心跳 + 自动落盘（手册 5.4）
@@ -977,22 +997,24 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] in HANDLERS:
-        CFG()  # Initialize proxies before dispatching
-        verb = sys.argv[1]
-        args = sys.argv[2:]
-        result = HANDLERS[verb](args)
-        if result:
-            if result.get("stdout"):
-                print(result["stdout"], end="", flush=True)
-            sys.exit(result.get("code", 0))
-        else:
-            sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
-        print(VERB_TABLE)
-        sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
-        print("loopd v0.1.6")
-        sys.exit(0)
-    else:
+    _verb = sys.argv[1] if len(sys.argv) > 1 else None
+    if _verb is None:
+        # 无参数调用：进入守护进程主循环（行为不变）
         main()
+    elif _verb in ("--version", "-v"):
+        _emit({"ok": True, "version": "loopd v0.1.6"})
+        sys.exit(EXIT_OK)
+    elif _verb in HANDLERS or _verb in ("--help", "-h"):
+        _op = _verb if _verb in HANDLERS else "help"
+        CFG()  # Initialize proxies before dispatching
+        _result = HANDLERS[_op](sys.argv[2:])
+        if _op == "help" and isinstance(_result, dict) and "verbs" in _result:
+            _emit(_result)  # help 输出顶级 verbs 数组（AC-1/AC-2）
+        else:
+            _emit({"verb": _op, "result": _result})
+        _code = int(_result.get("code", 0)) if isinstance(_result, dict) else 0
+        sys.exit(EXIT_OK if _code == 0 else _code)
+    else:
+        # 未知动词 → UNKNOWN_VERB 且退出码 64（AC-3）
+        _emit({"error": "UNKNOWN_VERB", "verb": _verb})
+        sys.exit(EXIT_UNKNOWN_VERB)
