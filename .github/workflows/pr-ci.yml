@@ -127,6 +127,7 @@ jobs:
         run: |
           set -euo pipefail
           PINACT_VERSION=4.1.1
+          mkdir -p "$HOME/bin"
           curl -sSL "https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}/pinact_linux_amd64.tar.gz" -o /tmp/pinact.tar.gz
           tar -xzf /tmp/pinact.tar.gz -C /tmp/
           cp /tmp/pinact "$HOME/bin/"
