@@ -18,7 +18,7 @@ sys.path 修复（W0-3 根因修复）。
 
 退出码：缺脚本 lens → exit 1（不静默跳过）；否则 exit 0。
 """
-import json, pathlib, os, subprocess, datetime, tempfile, sys
+import json, pathlib, subprocess, datetime, tempfile, sys
 
 
 def _now_iso():
@@ -84,18 +84,27 @@ def run_audit_shards():
             with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as f:
                 ev_out = f.name
             # 调用 lens 脚本（约定：lens <ev_in.json> <ev_out.json>）
-            # subprocess.run 返回值不绑定到变量：返回值此处未使用（results 从 ev_out
-            # 解析），绑定只会触发"variable defined multiple times"告警（CodeQL）。
+            # 采纳 Copilot 建议：检查 returncode 区分"lens 显式失败(非0退出)"与
+            # "脚本崩溃/异常"；前者记入 LENS_FAILURES 以便循环结束后整体红，避免
+            # 静默吞错（N11）。保持原 12 空格缩进，修复 c84ec7d 的 IndentationError。
             try:
-                subprocess.run(
+                p = subprocess.run(
                     ['bash', str(script_sh), ev_in, ev_out],
                     capture_output=True, text=True, timeout=300,
                     cwd=str(LOOP))
-                try:
-                    results = json.loads(pathlib.Path(ev_out).read_text() or '[]')
-                except Exception as e:
+                if p.returncode != 0:
+                    msg = (p.stderr or p.stdout or f"LENS_NOT_EXECUTED: {lens} (exit {p.returncode})").strip()
+                    print(msg, file=sys.stderr)
+                    LENS_FAILURES.append((sid, lens))
                     results = []
+                else:
+                    try:
+                        results = json.loads(pathlib.Path(ev_out).read_text() or '[]')
+                    except Exception as e:
+                        results = []
             except Exception as e:
+                print(f"LENS_NOT_EXECUTED: {lens} ({e})", file=sys.stderr)
+                LENS_FAILURES.append((sid, lens))
                 results = []
             # fingerprint 去重 + 配额控制
             state = _load_audit_state()

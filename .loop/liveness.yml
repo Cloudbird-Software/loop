@@ -2,6 +2,9 @@
 # 每个 workflow 的期望运行间隔；超期由 tick/drift 检测开 Incident。
 # 消费方：conductor/tick.py liveness_check + W0-5 digest。
 # 顶层 ticks 键为权威契约（W0-5 AC-3: assert 'ticks' in d）。
+# name 必须是 .github/workflows/<name>.yml 的基名（tick.py line 917 用 f"{name}.yml" 查询）。
+# 采纳 Copilot PR review 建议：tick → conductor（实际 workflow 文件是 conductor.yml，
+# 原 name: tick 会查 tick.yml 导致 digest 永久误报 "liveness 无 run: tick"）。
 ticks:
   - name: template-sync
     expect_hours: 30
@@ -9,7 +12,7 @@ ticks:
     expect_hours: 30
   - name: upgrade
     expect_hours: 180
-  - name: tick
+  - name: conductor
     expect_hours: 1
   - name: canary
     expect_hours: 2
