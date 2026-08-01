@@ -20,7 +20,17 @@ sys.path 修复（W0-3 根因修复）。
 
 退出码：缺脚本 lens 或 lens 非 0 退出 → exit 1（不静默跳过）；否则 exit 0。
 """
-import json, pathlib, subprocess, datetime, tempfile, sys
+import json, pathlib, subprocess, datetime, tempfile, sys, os
+
+# W0-3 根因修复：直接运行 `python conductor/audit.py` 时 sys.path[0] 是 conductor/
+# 而非仓库根，导致下方延迟导入 `from conductor.tick import ...` 与
+# `from conductor.findings import ...` 抛 ModuleNotFoundError（与 tick.py 同一根因；
+# Copilot round-4 review 指出：docstring 声称共享 sys.path 修复但本文件自身缺这层）。
+# 把仓库根插入 sys.path，使 conductor.* 包导入在脚本直跑与 `python -m conductor.audit`
+# 两种模式下都可用。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 
 def _now_iso():

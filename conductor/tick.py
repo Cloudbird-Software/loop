@@ -809,11 +809,43 @@ HUMAN_TODO_TEMPLATE = LOOP_ROOT / ".loop" / "templates" / "human-todo.md"
 HUMAN_TODO_OUTPUT = LOOP_ROOT / ".loop" / "HUMAN-TODO.md"
 LIVENESS_FILE = LOOP_ROOT / ".loop" / "liveness.yml"
 
+def _liveness_fallback_parse():
+    """简易 YAML 解析（PyYAML 不可用或内容损坏时的降级路径，与 load_policy 同风格）。
+
+    返回 [{'name': str, 'expect_hours': int}, ...]；文件缺失返回 []。
+    """
+    ticks = []
+    current = None
+    try:
+        with open(LIVENESS_FILE) as f:
+            for line in f:
+                line = line.rstrip()
+                if not line or line.lstrip().startswith("#"): continue
+                s = line.strip()
+                if s.startswith("- name:"):
+                    current = {"name": s.split(":",1)[1].strip(), "expect_hours": 0}
+                    ticks.append(current)
+                elif s.startswith("expect_hours:") and current is not None:
+                    try:
+                        current["expect_hours"] = int(s.split(":",1)[1].strip())
+                    except ValueError:
+                        # 非整数预期值：保留默认 0，best-effort 容错（CodeQL：非空 except）。
+                        pass
+    except FileNotFoundError:
+        # fallback 解析阶段文件不存在：返回当前累积值（通常为空列表），
+        # 与函数末尾 return ticks 行为一致（CodeQL：非空 except）。
+        return ticks
+    return ticks
+
 def _load_liveness_config():
     """读 .loop/liveness.yml 的 ticks 列表（W0-2 登记 9 条 cron 期望周期）。
 
     返回 [{'name': str, 'expect_hours': int}, ...]；文件缺失返回 []。
     纯文件读取，不依赖网络——满足 W0-5 AC-3 的可独立验证性。
+
+    Copilot round-4 review：PyYAML 可用时仅捕获 FileNotFoundError，若内容损坏
+    导致 yaml.safe_load 抛 YAMLError 会让 --generate-digest 崩溃；其余采集路径均
+    best-effort，此处也对 YAMLError 降级到 fallback 简易解析。
     """
     try:
         import yaml
@@ -823,29 +855,13 @@ def _load_liveness_config():
     except FileNotFoundError:
         return []
     except ImportError:
-        # fallback: 简易解析（与 load_policy 同风格）
-        ticks = []
-        current = None
-        try:
-            with open(LIVENESS_FILE) as f:
-                for line in f:
-                    line = line.rstrip()
-                    if not line or line.lstrip().startswith("#"): continue
-                    s = line.strip()
-                    if s.startswith("- name:"):
-                        current = {"name": s.split(":",1)[1].strip(), "expect_hours": 0}
-                        ticks.append(current)
-                    elif s.startswith("expect_hours:") and current is not None:
-                        try:
-                            current["expect_hours"] = int(s.split(":",1)[1].strip())
-                        except ValueError:
-                            # 非整数预期值：保留默认 0，best-effort 容错（CodeQL：非空 except）。
-                            pass
-        except FileNotFoundError:
-            # fallback 解析阶段文件不存在：返回当前累积值（通常为空列表），
-            # 与函数末尾 return ticks 行为一致（CodeQL：非空 except）。
-            return ticks
-        return ticks
+        # PyYAML 未安装：降级到 fallback 简易解析
+        return _liveness_fallback_parse()
+    except yaml.YAMLError as e:
+        # YAML 内容损坏：降级到 fallback 简易解析，避免 digest 中断
+        # （此时 yaml 已成功 import，故 yaml.YAMLError 可安全引用）。
+        print(f"[warn] liveness.yml YAML parse failed, using fallback: {e}", file=sys.stderr)
+        return _liveness_fallback_parse()
 
 def _gather_blocked_on_human():
     """卡在我这的：查 needs-human 标签的 open issue + 根 HUMAN-TODO.md 未勾选条目。"""

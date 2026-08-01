@@ -6,13 +6,19 @@ import os
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(HERE)
+# Copilot round-4 review：REPO_ROOT 从 gate 文件自身路径推导会导致
+# `run_gates.py --root <target_repo>` 场景下仍执行 loop 仓的 smoke.sh，而非 target
+# repo 的。run_gates 通过 cwd（=--root 指定的目标仓）执行 gate，故这里用 os.getcwd()
+# 作为作用仓根，与 gate_settings_roundtrip.py 等其他 gate 一致，真正覆盖 --root 指定仓。
+REPO_ROOT = os.getcwd()
 SMOKE = os.path.join(REPO_ROOT, ".loop", "smoke.sh")
 
 if not os.path.isfile(SMOKE):
-    print(f"FAIL: smoke.sh not found at {SMOKE}")
-    sys.exit(1)
+    # Copilot round-4 review：smoke.sh 缺失是执行错误（gate 找不到要跑的脚本），
+    # 不是 smoke 断言失败；按下方 returncode>1=ERROR 的同一语义，用 exit 2 让
+    # run_gates.py 归类为 GATE_ERRORED 而非 FAIL。
+    print(f"ERROR: smoke.sh not found at {SMOKE} (gate execution error)")
+    sys.exit(2)
 
 p = subprocess.run(["bash", SMOKE], cwd=REPO_ROOT)
 if p.returncode == 0:
