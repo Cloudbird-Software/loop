@@ -115,6 +115,9 @@ gates:
       # - rubric
     strict:                      # 产品仓全集（含 conformance；LOOP.yml gates.profile: strict）
       # 同 default + conformance + 以下（按波次同步）
+      # 注意：smoke gate 不在 strict profile——gate_smoke.py 跑 .loop/smoke.sh，
+      # 该脚本断言 loop 仓专属文件（products.yml / conductor.yml 等），
+      # 产品仓没有这些文件会误红（Copilot round-7 review 建议）。
       - charter
       - diffsize
       - license
@@ -125,5 +128,4 @@ gates:
       - verdict
       - lockdiff
       - heterogeneity
-      - smoke
       - conformance

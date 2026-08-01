@@ -846,12 +846,15 @@ def _load_liveness_config():
     Copilot round-4 review：PyYAML 可用时仅捕获 FileNotFoundError，若内容损坏
     导致 yaml.safe_load 抛 YAMLError 会让 --generate-digest 崩溃；其余采集路径均
     best-effort，此处也对 YAMLError 降级到 fallback 简易解析。
+    Copilot round-7 review：ticks 非 list 或元素非 dict 时，后续 _gather_degradations
+    / _render_liveness_table 会 t.get(...) 崩溃；此处做结构归一化（非 list→[]，
+    非 dict 元素过滤），与 best-effort 不崩溃意图一致。
     """
     try:
         import yaml
         with open(LIVENESS_FILE) as f:
             d = yaml.safe_load(f) or {}
-        return d.get("ticks", [])
+        raw = d.get("ticks", [])
     except FileNotFoundError:
         return []
     except ImportError:
@@ -862,6 +865,10 @@ def _load_liveness_config():
         # （此时 yaml 已成功 import，故 yaml.YAMLError 可安全引用）。
         print(f"[warn] liveness.yml YAML parse failed, using fallback: {e}", file=sys.stderr)
         return _liveness_fallback_parse()
+    # 结构归一化：ticks 非 list → []；元素非 dict → 过滤掉
+    if not isinstance(raw, list):
+        return []
+    return [t for t in raw if isinstance(t, dict)]
 
 def _gather_blocked_on_human():
     """卡在我这的：查 needs-human 标签的 open issue + 根 HUMAN-TODO.md 未勾选条目。"""

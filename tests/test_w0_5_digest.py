@@ -23,9 +23,14 @@ def _setup_env():
     Copilot review：原实现把 os.environ / sys.path 突变放在模块级，
     pytest 收集时即生效，会泄漏到其他测试造成顺序依赖。
     改为 per-test setup，每次调用都创建全新临时目录、保存/恢复环境变量。
+    Copilot round-7 review：reload 会改变共享的 conductor.tick 模块对象，
+    影响其他测试模块的模块级常量。cleanup 里恢复环境变量后重新 reload tick，
+    使其回到原始 LOOP_ROOT / POLICY 绑定（消除跨测试污染）。
     """
     saved_env = os.environ.copy()
     saved_path = sys.path[:]
+    # 记录 conductor.tick 是否已被其他测试 import，cleanup 时据此决定是否 restore
+    tick_was_loaded = "conductor.tick" in sys.modules
 
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="w05-digest-test-"))
     os.environ["LOOP_ROOT"] = str(tmp)
@@ -46,9 +51,12 @@ def _setup_env():
         from conductor import tick as tick_module
 
     def cleanup():
+        # 先恢复环境变量，再 reload tick 使其绑定回原始 LOOP_ROOT / POLICY
         os.environ.clear()
         os.environ.update(saved_env)
         sys.path[:] = saved_path
+        if tick_was_loaded and "conductor.tick" in sys.modules:
+            importlib.reload(sys.modules["conductor.tick"])
         if tmp.exists():
             shutil.rmtree(str(tmp), ignore_errors=True)
 

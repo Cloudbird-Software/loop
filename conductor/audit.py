@@ -129,9 +129,12 @@ def run_audit_shards():
                     try:
                         results = json.loads(pathlib.Path(ev_out).read_text() or '[]')
                     except Exception as e:
+                        # lens 输出 JSON 解析失败：记录并计入失败（Copilot autofix ec23982
+                        # 意图正确但破坏了外层 except 结构，此处手动修正缩进与结构）。
                         print(f"LENS_OUTPUT_INVALID: {lens} ({e})", file=sys.stderr)
                         LENS_FAILURES.append((sid, lens))
                         results = []
+            except Exception as e:
                 print(f"LENS_FAILED: {lens} ({e})", file=sys.stderr)
                 LENS_FAILURES.append((sid, lens))
                 results = []
