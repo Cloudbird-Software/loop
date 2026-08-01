@@ -931,6 +931,7 @@ def reaper_thread():
 # 主循环（手册 5.1）
 # ============================================================
 def main():
+    CFG()  # Ensure all proxy globals (LOOP, ROOT, etc.) are initialized before use
     # 确保目录结构存在（#52/#53：RELAY/inbox/outbox/done 已移除）
     for d in [LOOP, LOOP/"logs", LOOP/"trash", LOOP/"audit", LOOP/"plan"]:
         d.mkdir(parents=True, exist_ok=True)
@@ -948,4 +949,23 @@ def main():
         time.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] in HANDLERS:
+        CFG()  # Initialize proxies before dispatching
+        verb = sys.argv[1]
+        args = sys.argv[2:]
+        result = HANDLERS[verb](args)
+        if result:
+            if result.get("stdout"):
+                print(result["stdout"], end="", flush=True)
+            sys.exit(result.get("code", 0))
+        else:
+            sys.exit(0)
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
+        print(VERB_TABLE)
+        sys.exit(0)
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
+        print("loopd v0.1.6")
+        sys.exit(0)
+    else:
+        main()

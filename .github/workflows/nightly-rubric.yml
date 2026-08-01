@@ -92,7 +92,7 @@ jobs:
           set -e
           python conductor/retro.py
       - name: Upload retro artifacts（JSON + 正文 + LLM attribution human-verify）
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: retro-artifacts
           path: |
@@ -114,7 +114,7 @@ jobs:
           # （passed 时自动关闭父 issue）。status=passed/failed/needs_human 替换原 stub_pending。
           python conductor/retro.py wave-acceptance waves/WAVE-14.md
       - name: Upload wave acceptance evidence（归档进 evidence）
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e # v4.5.0
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: wave-acceptance-evidence
           path: evidence/wave-acceptance/*.json

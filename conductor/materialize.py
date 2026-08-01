@@ -211,8 +211,42 @@ def validate_charter(card, charter_ids, cid):
 # Four validations
 # ============================================================
 
+def _build_dependency_pairs(cards):
+    """Build set of (blocked_id, blocker_id) pairs from blocked_by fields.
+    If A is blocked_by [B], then (A_id, B_id) means B must complete before A.
+    Transitively resolved: if A blocked_by B and B blocked_by C, then A also blocked_by C.
+    These pairs are exempt from path conflict detection because they guarantee sequential execution.
+    """
+    blockers = {}
+    for c in cards:
+        cid = c.get("id", "")
+        bby = c.get("blocked_by", []) or []
+        if cid and bby:
+            blockers[cid] = set(bby)
+    # Transitive closure
+    changed = True
+    while changed:
+        changed = False
+        for cid, deps in list(blockers.items()):
+            for dep in list(deps):
+                if dep in blockers:
+                    new_deps = blockers[dep] - deps
+                    if new_deps:
+                        deps.update(new_deps)
+                        changed = True
+    # Return set of (blocked_id, blocker_id) pairs
+    pairs = set()
+    for cid, deps in blockers.items():
+        for dep in deps:
+            pairs.add((cid, dep))
+    return pairs
+
+
 def validate(cards, charter_ids):
-    """校验四项，返回 (errors, valid_cards)。"""
+    """校验四项，返回 (errors, valid_cards)。
+    blocked_by 机制作为路径冲突豁免：若卡 A blocked_by 卡 B，则 A/B 交叉可接受
+    （B 完成前 A 不会启动，串行执行不会产生冲突）。
+    """
     errors = []
     valid = []
     for i, card in enumerate(cards):
@@ -236,9 +270,12 @@ def validate(cards, charter_ids):
             errors.extend(card_errors)
         else:
             valid.append(card)
-    # 5. paths 两两不交叉（只在 valid 卡之间检测）
+    # 5. paths 两两不交叉（只在 valid 卡之间检测；blocked_by 机制豁免）
+    dep_pairs = _build_dependency_pairs(valid)
     for i, a in enumerate(valid):
         for b in valid[i+1:]:
+            aid = a.get("id", "?")
+            bid = b.get("id", "?")
             if GLOB(a.get("paths",[]), b.get("paths",[])):
                 # Skip conflict if cards have a blocked_by dependency (can never run concurrently)
                 a_blocks_b = b.get("id") in (a.get("blocked_by") or [])
@@ -248,6 +285,8 @@ def validate(cards, charter_ids):
     # Re-filter: remove cards that have path conflicts
     conflict_ids = set()
     for e in errors:
+        if "EXEMPTED" in e:
+            continue
         m = re.match(r"Path conflict: (\S+) and (\S+)", e)
         if m:
             conflict_ids.add(m.group(1))
