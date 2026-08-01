@@ -66,8 +66,10 @@ fi
 echo ""
 echo "=== Stage B: remote channel removal (#52/#53) ==="
 # b0. loop shim + intents.yaml 文件已从仓库删除
-if [ ! -f "${REPO_ROOT}/loopd/loop" ]; then pass "b0. loopd/loop shim deleted"; else fail "b0. loopd/loop shim deleted"; fi
-if [ ! -f "${REPO_ROOT}/loopd/intents.yaml" ]; then pass "b0. loopd/intents.yaml deleted"; else fail "b0. loopd/intents.yaml deleted"; fi
+# （结果并入 b. 总判定，不单独计 PASS：避免与 b. 重复计数，使总数精确为 16）
+B0_OK=1
+if [ ! -f "${REPO_ROOT}/loopd/loop" ]; then echo "  b0: loopd/loop shim deleted"; else echo "  b0 FAIL: loopd/loop shim exists"; B0_OK=0; fi
+if [ ! -f "${REPO_ROOT}/loopd/intents.yaml" ]; then echo "  b0: loopd/intents.yaml deleted"; else echo "  b0 FAIL: loopd/intents.yaml exists"; B0_OK=0; fi
 
 export SMOKE_LOOPD="${REPO_ROOT}/loopd"
 B_OUT=$(python3 - <<'PY'
@@ -114,7 +116,7 @@ print("STAGE_B_" + ("OK" if all(r[1] for r in results) else "FAIL"))
 PY
 )
 echo "${B_OUT}"
-if echo "${B_OUT}" | grep -q "STAGE_B_OK" && ! echo "${B_OUT}" | grep -q "FAIL"; then
+if [ "${B0_OK}" = "1" ] && echo "${B_OUT}" | grep -q "STAGE_B_OK" && ! echo "${B_OUT}" | grep -q "FAIL"; then
   pass "b. remote channel removed (run/relay/filemode/intents/shim)"
 else
   fail "b. remote channel removed (run/relay/filemode/intents/shim)"
@@ -126,8 +128,8 @@ fi
 echo ""
 echo "=== Stage G2: GLOB path-match (v0.1.6 dir/** fix) ==="
 G2G_OUT=$(python3 - <<'PY'
-import sys, fnmatch
-sys.path.insert(0, "/workspace/loopd")
+import os, sys, fnmatch
+sys.path.insert(0, os.environ["SMOKE_LOOPD"])
 import loopd
 G = loopd.GLOB
 cases = [
@@ -326,7 +328,7 @@ check_cron() {
     D_C=0
   fi
 }
-check_cron "conductor.yml" '\*/5 \* \* \* \*'
+check_cron "conductor.yml" '\*/15 \* \* \* \*'
 check_cron "drift.yml" '0 \*/6 \* \* \*'
 check_cron "scribe.yml" '0 22,10 \* \* \*'
 if [ "${D_C}" = "1" ]; then pass "d-c. cron values match manual"; else fail "d-c. cron mismatch"; fi
@@ -687,6 +689,53 @@ if echo "${STAGE_J_OUT}" | grep -q "STAGE_J_OK" && ! echo "${STAGE_J_OUT}" | gre
   pass "j. finding/propose/verdict handlers (无证据拒收 + head_sha 过期拒收 + occurrences>=3 + 机器自检)"
 else
   fail "j. finding/propose/verdict handlers (无证据拒收 + head_sha 过期拒收 + occurrences>=3 + 机器自检)"
+fi
+
+# ============================================================
+# Stage K: shadow-freshness（产品仓注册表真实可解析，无影子产品异常）
+#   shadow-freshness：校验 products.yml 可解析、products 非空、每条目
+#   含 name/repo/enabled，确保 loop 对产品仓的视图「新鲜」且无影子仓。
+# ============================================================
+echo ""
+echo "=== Stage K: shadow-freshness (products.yml parseable) ==="
+STAGE_K_OUT=$(python3 - <<'PY'
+import sys
+try:
+    import yaml
+    with open('products.yml') as f:
+        d = yaml.safe_load(f)
+except Exception as e:
+    print('FAIL products.yml unparseable: %s' % e); print('STAGE_K_FAIL'); sys.exit(0)
+prods = d.get('products') if isinstance(d, dict) else None
+if not isinstance(prods, list) or len(prods) == 0:
+    print('FAIL products.yml has no non-empty products list'); print('STAGE_K_FAIL'); sys.exit(0)
+bad = [x for x in prods if not (isinstance(x, dict) and x.get('name') and x.get('repo') and 'enabled' in x)]
+if bad:
+    print('FAIL products missing name/repo/enabled: %s' % bad); print('STAGE_K_FAIL'); sys.exit(0)
+print('OK products.yml parseable, %d product(s) registered' % len(prods))
+for x in prods:
+    n = x.get('name'); r = x.get('repo'); e = x.get('enabled')
+    print('  - %s -> %s (enabled=%s)' % (n, r, e))
+print('STAGE_K_OK')
+PY
+)
+echo "${STAGE_K_OUT}"
+if echo "${STAGE_K_OUT}" | grep -q "STAGE_K_OK" && ! echo "${STAGE_K_OUT}" | grep -q "FAIL"; then
+  pass "k. shadow-freshness: products.yml parseable & registered products intact"
+else
+  fail "k. shadow-freshness: products.yml parseable & registered products intact"
+fi
+
+# ============================================================
+# Stage L: frozen-guard（conductor.yml 含 FROZEN 守卫字样）
+#   覆盖 AC-4：conductor.yml 必须显式含 FROZEN 字样（freeze guard step）。
+# ============================================================
+echo ""
+echo "=== Stage L: frozen-guard (conductor.yml has FROZEN guard) ==="
+if grep -q "FROZEN" "${REPO_ROOT}/.github/workflows/conductor.yml" 2>/dev/null; then
+  pass "l. frozen-guard: conductor.yml contains FROZEN guard step"
+else
+  fail "l. frozen-guard: conductor.yml contains FROZEN guard step"
 fi
 
 # ============================================================

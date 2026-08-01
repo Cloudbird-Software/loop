@@ -1,6 +1,6 @@
 name: conductor
 on:
-  schedule: [{cron: "*/5 * * * *"}]
+  schedule: [{cron: "*/15 * * * *"}]
   repository_dispatch: {types: [loop-tick]}
   workflow_dispatch:
 permissions: {contents: read}
@@ -14,7 +14,27 @@ jobs:
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
       - run: pip install --require-hashes -r requirements.txt
+      - name: Freeze guard
+        id: freeze
+        run: |
+          python3 - <<'PY'
+          import yaml, sys, os
+          p = yaml.safe_load(open('policy.yml'))
+          if p.get('freeze', {}).get('all'):
+              print('FROZEN: wave frozen, skip tick')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('frozen=true\n')
+              sys.exit(0)
+          print('not frozen, proceed')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('frozen=false\n')
+          PY
       - run: python conductor/tick.py
+        if: steps.freeze.outputs.frozen == 'false'
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_POLICY: policy.yml
+          # W0-3：显式注入 LOOP_ROOT，让 tick.resolve_loop_root() 优先取 checkout 目录
+          # （优先级 LOOP_ROOT > GITHUB_WORKSPACE > /workspace），与 tick.py 内的 freeze
+          # 守卫配合——freeze.all=true 时 tick 进程内即退出 0、无写操作（N2 负证）。
+          LOOP_ROOT: ${{ github.workspace }}

@@ -11,6 +11,17 @@
 """
 import ast, json, os, subprocess, sys, time, fnmatch, re, datetime, hashlib, pathlib, tempfile
 
+# W0-3 根因修复：直接运行 `python conductor/tick.py` 时 sys.path[0] 是 conductor/
+# 而非仓库根，导致 `from conductor.X import ...` 抛 ModuleNotFoundError（conductor
+# 10+ 连败根因，CI run 30684245290 traceback 指向 race_mode_handler line 738 的
+# `from conductor.claim_intake import is_claim_pickable_by_impl`）。把仓库根插入
+# sys.path，使 conductor.* 包导入在直接运行与 `python -m conductor.tick` 模式下都
+# 可用。与下方 try/except fallback 互补（后者仅兜底 blocks，本修复根治所有
+# conductor.* 导入，包括 race_mode_handler 内的延迟导入）。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 try:
     from conductor.blocks import extract_block, inject_block
 except ImportError:
@@ -792,6 +803,219 @@ def race_mode_handler():
         print(f"  → race card={cid}: winner PR#{winner_pr['number']} vs {len(losers)} losers closed")
 
 # ==================================================================
+# [12] 每日 digest：生成 .loop/HUMAN-TODO.md 四问（W0-5）
+# ==================================================================
+HUMAN_TODO_TEMPLATE = LOOP_ROOT / ".loop" / "templates" / "human-todo.md"
+HUMAN_TODO_OUTPUT = LOOP_ROOT / ".loop" / "HUMAN-TODO.md"
+LIVENESS_FILE = LOOP_ROOT / ".loop" / "liveness.yml"
+
+def _liveness_fallback_parse():
+    """简易 YAML 解析（PyYAML 不可用或内容损坏时的降级路径，与 load_policy 同风格）。
+
+    返回 [{'name': str, 'expect_hours': int}, ...]；文件缺失返回 []。
+    """
+    ticks = []
+    current = None
+    try:
+        with open(LIVENESS_FILE) as f:
+            for line in f:
+                line = line.rstrip()
+                if not line or line.lstrip().startswith("#"): continue
+                s = line.strip()
+                if s.startswith("- name:"):
+                    current = {"name": s.split(":",1)[1].strip(), "expect_hours": 0}
+                    ticks.append(current)
+                elif s.startswith("expect_hours:") and current is not None:
+                    try:
+                        current["expect_hours"] = int(s.split(":",1)[1].strip())
+                    except ValueError:
+                        # 非整数预期值：保留默认 0，best-effort 容错（CodeQL：非空 except）。
+                        pass
+    except FileNotFoundError:
+        # fallback 解析阶段文件不存在：返回当前累积值（通常为空列表），
+        # 与函数末尾 return ticks 行为一致（CodeQL：非空 except）。
+        return ticks
+    return ticks
+
+def _load_liveness_config():
+    """读 .loop/liveness.yml 的 ticks 列表（W0-2 登记 9 条 cron 期望周期）。
+
+    返回 [{'name': str, 'expect_hours': int}, ...]；文件缺失返回 []。
+    纯文件读取，不依赖网络——满足 W0-5 AC-3 的可独立验证性。
+
+    Copilot round-4 review：PyYAML 可用时仅捕获 FileNotFoundError，若内容损坏
+    导致 yaml.safe_load 抛 YAMLError 会让 --generate-digest 崩溃；其余采集路径均
+    best-effort，此处也对 YAMLError 降级到 fallback 简易解析。
+    Copilot round-7 review：ticks 非 list 或元素非 dict 时，后续 _gather_degradations
+    / _render_liveness_table 会 t.get(...) 崩溃；此处做结构归一化（非 list→[]，
+    非 dict 元素过滤），与 best-effort 不崩溃意图一致。
+    """
+    try:
+        import yaml
+        with open(LIVENESS_FILE) as f:
+            d = yaml.safe_load(f) or {}
+        raw = d.get("ticks", [])
+    except FileNotFoundError:
+        return []
+    except ImportError:
+        # PyYAML 未安装：降级到 fallback 简易解析
+        return _liveness_fallback_parse()
+    except yaml.YAMLError as e:
+        # YAML 内容损坏：降级到 fallback 简易解析，避免 digest 中断
+        # （此时 yaml 已成功 import，故 yaml.YAMLError 可安全引用）。
+        print(f"[warn] liveness.yml YAML parse failed, using fallback: {e}", file=sys.stderr)
+        return _liveness_fallback_parse()
+    # 结构归一化：ticks 非 list → []；元素非 dict → 过滤掉
+    if not isinstance(raw, list):
+        return []
+    return [t for t in raw if isinstance(t, dict)]
+
+def _gather_blocked_on_human():
+    """卡在我这的：查 needs-human 标签的 open issue + 根 HUMAN-TODO.md 未勾选条目。"""
+    items = []
+    # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致，
+    # 避免 needs-human 查询失败中断整个 digest（CodeQL：非空 except）。
+    try:
+        p = gh("issue","list","-R",REPO,"--label","needs-human","--state","open",
+               "--limit","30","--json","number,title")
+        for it in json.loads(p.stdout or "[]"):
+            items.append(f"- [ ] #{it['number']} {it['title']}")
+    except Exception as e:
+        print(f"[warn] _gather_blocked_on_human: {e}", file=sys.stderr)
+    if not items:
+        items.append("- （当前无 needs-human 标签的 open issue）")
+    # 附加根 HUMAN-TODO.md 的未勾选条目（人工维护的长期清单）
+    root_todo = LOOP_ROOT / "HUMAN-TODO.md"
+    if root_todo.exists():
+        unchecked = []
+        for line in root_todo.read_text().splitlines():
+            if line.strip().startswith("### [ ]"):
+                # '### [ ] A1. ...' → '- [ ] A1. ...'（剥 '### ' 前缀，保留 checkbox）
+                unchecked.append(f"- {line.strip()[4:]}")
+        if unchecked:
+            items.append("")
+            items.append("**根 HUMAN-TODO.md 未勾选条目**（人工维护长期清单）：")
+            items.extend(unchecked)
+    return "\n".join(items)
+
+def _gather_released_yesterday():
+    """昨天放行的：最近 24h 合并的 PR。"""
+    since = (datetime.datetime.now(datetime.timezone.utc) -
+             datetime.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # best-effort 采集：gh 调用本身可能抛异常（网络/权限），包一层 try 与其他
+    # _gather_* 保持一致容错风格，避免单点失败中断整个 digest 渲染。
+    try:
+        p = gh("pr","list","-R",REPO,"--state","merged","--limit","50",
+               "--search",f"merged:>{since}","--json","number,title,mergedAt,author")
+        prs = json.loads(p.stdout or "[]")
+    except Exception as e:
+        print(f"[warn] _gather_released_yesterday: {e}", file=sys.stderr)
+        prs = []
+    if not prs:
+        return "- （最近 24h 无合并 PR）"
+    lines = []
+    for pr in prs:
+        lines.append(f"- #{pr['number']} {pr['title']} (@{pr.get('author',{}).get('login','?')})")
+    return "\n".join(lines)
+
+def _gather_degradations():
+    """什么退化了：CI 连败 + 存活超期 + 新开 Incident。"""
+    items = []
+    # 1. 控制面 workflow 最近 3 次 run 中的 failure（--limit 3，与下方一致）
+    for wf in ("conductor.yml", "audit.yml", "canary.yml", "scribe.yml", "drift.yml"):
+        # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致，
+        # 避免单个 workflow 查询失败中断整个 digest（CodeQL：非空 except）。
+        try:
+            p = gh("run","list","-R",CONTROL_REPO,"--workflow",wf,"--limit","3",
+                   "--json","conclusion,createdAt,displayTitle")
+            runs = json.loads(p.stdout or "[]")
+        except Exception as e:
+            print(f"[warn] degradations {wf}: {e}", file=sys.stderr)
+            runs = []
+        fails = [r for r in runs if r.get("conclusion") == "failure"]
+        if fails:
+            items.append(f"- **{wf}** 最近 {len(fails)}/{len(runs)} 次为 failure（最近: {fails[0].get('createdAt','?')}）")
+    # 2. liveness 超期检测（读 liveness.yml 期望周期 vs 实际最近 run）
+    ticks = _load_liveness_config()
+    if ticks:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for t in ticks:
+            name = t.get("name","")
+            expect = t.get("expect_hours", 0)
+            # W0-5 类型守卫（Copilot review）：_load_liveness_config 在 PyYAML 可用时
+            # 会原样返回非整数 expect_hours（如字符串），直接 expect <= 0 会抛
+            # TypeError 中断 digest。强制转 int，转换失败则按 0 跳过该项。
+            try:
+                expect = int(expect)
+            except (TypeError, ValueError):
+                expect = 0
+            if not name or expect <= 0: continue
+            # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致。
+            try:
+                p = gh("run","list","-R",CONTROL_REPO,"--workflow",f"{name}.yml",
+                       "--limit","1","--json","createdAt,conclusion")
+                runs = json.loads(p.stdout or "[]")
+                if runs:
+                    created = _parse_utc_iso(runs[0]["createdAt"])
+                    age_h = (now - created).total_seconds() / 3600
+                    if age_h > expect:
+                        items.append(f"- **liveness 超期**: {name} 最近 run 在 {age_h:.1f}h 前（期望 ≤{expect}h）")
+                else:
+                    items.append(f"- **liveness 无 run**: {name} 从未运行过（期望 ≤{expect}h）")
+            except Exception as e:
+                # best-effort 采集：单个 workflow 的 run 解析失败不影响总体扫描，
+                # 跳过该项继续下一个（CodeQL：非空 except）。
+                print(f"[warn] liveness {name}: {e}", file=sys.stderr)
+    # 3. open Incident
+    try:
+        p = gh("issue","list","-R",REPO,"--label","incident","--state","open",
+               "--limit","10","--json","number,title,createdAt")
+        incs = json.loads(p.stdout or "[]")
+        for inc in incs:
+            items.append(f"- **Incident #{inc['number']}**: {inc['title']} ({inc.get('createdAt','?')})")
+    except Exception as e:
+        # best-effort 采集：Incident 解析失败时降级为空，不中断 digest（CodeQL：非空 except）。
+        print(f"[warn] incidents: {e}", file=sys.stderr)
+    if not items:
+        items.append("- （无退化：CI 无连败、liveness 全在期内、无 open Incident）")
+    return "\n".join(items)
+
+def _render_liveness_table():
+    """liveness 期望周期表（附在 digest 末尾，供人快速核对）。"""
+    ticks = _load_liveness_config()
+    if not ticks:
+        return "（.loop/liveness.yml 未找到 ticks 配置）"
+    lines = ["| workflow | 期望周期 |", "|---|---|"]
+    for t in ticks:
+        lines.append(f"| {t.get('name','?')} | {t.get('expect_hours','?')}h |")
+    return "\n".join(lines)
+
+def generate_digest():
+    """生成 .loop/HUMAN-TODO.md 四问（W0-5）。
+
+    读 .loop/templates/human-todo.md 模板，填入四问数据，写 .loop/HUMAN-TODO.md。
+    四问（手册 245 行）：
+      1. 卡在我这的 — needs-human 标签 issue + 根 HUMAN-TODO.md 未勾选条目
+      2. 昨天放行的 — 最近 24h 合并的 PR
+      3. 什么退化了 — CI 连败 + liveness 超期 + open Incident
+      4. 花了多少 — 成本占位"未接入"（WAVE-12 落地计量管道）
+    """
+    print("[12] Generate HUMAN-TODO.md digest (四问)...")
+    if not HUMAN_TODO_TEMPLATE.exists():
+        print(f"  → template not found: {HUMAN_TODO_TEMPLATE}")
+        return
+    tpl = HUMAN_TODO_TEMPLATE.read_text(encoding="utf-8")
+    rendered = tpl.replace("{{generated_at}}", datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"))
+    rendered = rendered.replace("{{blocked_on_human}}", _gather_blocked_on_human())
+    rendered = rendered.replace("{{released_yesterday}}", _gather_released_yesterday())
+    rendered = rendered.replace("{{degradations}}", _gather_degradations())
+    rendered = rendered.replace("{{cost}}", "- 未接入（LLM 用量与 CI 分钟数计量管道在 WAVE-12 落地）")
+    rendered = rendered.replace("{{liveness_table}}", _render_liveness_table())
+    HUMAN_TODO_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    HUMAN_TODO_OUTPUT.write_text(rendered, encoding="utf-8")
+    print(f"  → wrote {HUMAN_TODO_OUTPUT}")
+
+# ==================================================================
 # main
 # ==================================================================
 def main(argv=None):
@@ -812,7 +1036,21 @@ def main(argv=None):
         print(f"[dry-run] POLICY_FILE={POLICY_FILE}")
         print("[dry-run] exiting before any gh calls (no network).")
         return
+    # W0-5: --generate-digest 只生成 .loop/HUMAN-TODO.md 四问，不走 tick 写操作。
+    # 与 freeze 守卫独立——digest 是只读聚合（gh query），即使波前冻结也该出报告。
+    if "--generate-digest" in args:
+        generate_digest()
+        return
     print(f"repo: {REPO}, policy: {POLICY_FILE}")
+    # W0-3 freeze 守卫：policy.freeze.all=true → 退出 0、日志 FROZEN、无写操作
+    # （波前冻结，满足 wave 负证 N2：freeze.all=true 时 tick 退出 0、日志 FROZEN、
+    # 无写操作）。与 conductor.yml 的 Freeze guard step 互补：workflow 级先拦，
+    # 此处为 tick 进程内 defense-in-depth，保证无论何种调用方式（cron /
+    # workflow_dispatch / 手动 `python conductor/tick.py`）都 honor freeze。
+    _freeze = POLICY.get("freeze", {}) or {}
+    if _freeze.get("all"):
+        print("FROZEN: policy.freeze.all=true, skipping tick writes (wave frozen)")
+        return
     zombie_reclaim()
     escalate()
     unblock_deps()

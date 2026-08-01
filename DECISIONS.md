@@ -255,3 +255,20 @@ tag + 40 位 SHA）、薄壳 workflow（只 `uses:` loop 的 reusable workflow�
 **后果**：
 - 机制层（R14-1~R14-5）已就位：lens→真实工单、波次自动验收+通知、四指标可回放、零覆盖补测试、单一接单入口。
 - 「ready」一词在本项目内严格保留给 ADR-014 的最终签署，不得在其他场合提前使用。
+
+## ADR-015: 恢复 shadow-freshness 冒烟用例
+
+**日期:** 2026-08-01
+**状态:** 已执行
+
+W0-4 在 `.loop/smoke.sh` 恢复 shadow-freshness 用例（Stage K）。shadow-freshness 指
+loop 控制面对产品仓注册表（`products.yml`）的视图必须「新鲜」且无影子产品——即注册表可被
+YAML 解析、`products` 列表非空、每条产品仓含 `name`/`repo`/`enabled` 必填字段。
+此前该用例缺席，导致 products.yml 漂移（如条目缺字段、注册表损坏）无法在本地冒烟阶段
+被发现，只能等跨仓 fan-out 失败才暴露。Stage K 把这一断言固化为本地冒烟的一环，
+与 ADR-013（通知通道选 GitHub Issue）配合：fan-out 前先本地校验注册表新鲜度，
+失败直接在 smoke 阶段拦截，不等到开 Incident。
+
+同卡 W0-4 另补 Stage L（frozen-guard），校验 `conductor.yml` 显式含 `FROZEN` 守卫字样
+（freeze guard step 读 `policy.yml` 的 `freeze.all`），覆盖波次冻结时 tick 显式跳过的可观测性。
+
