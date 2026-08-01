@@ -803,6 +803,174 @@ def race_mode_handler():
         print(f"  → race card={cid}: winner PR#{winner_pr['number']} vs {len(losers)} losers closed")
 
 # ==================================================================
+# [12] 每日 digest：生成 .loop/HUMAN-TODO.md 四问（W0-5）
+# ==================================================================
+HUMAN_TODO_TEMPLATE = LOOP_ROOT / ".loop" / "templates" / "human-todo.md"
+HUMAN_TODO_OUTPUT = LOOP_ROOT / ".loop" / "HUMAN-TODO.md"
+LIVENESS_FILE = LOOP_ROOT / ".loop" / "liveness.yml"
+
+def _load_liveness_config():
+    """读 .loop/liveness.yml 的 ticks 列表（W0-2 登记 9 条 cron 期望周期）。
+
+    返回 [{'name': str, 'expect_hours': int}, ...]；文件缺失返回 []。
+    纯文件读取，不依赖网络——满足 W0-5 AC-3 的可独立验证性。
+    """
+    try:
+        import yaml
+        with open(LIVENESS_FILE) as f:
+            d = yaml.safe_load(f) or {}
+        return d.get("ticks", [])
+    except FileNotFoundError:
+        return []
+    except ImportError:
+        # fallback: 简易解析（与 load_policy 同风格）
+        ticks = []
+        current = None
+        try:
+            with open(LIVENESS_FILE) as f:
+                for line in f:
+                    line = line.rstrip()
+                    if not line or line.lstrip().startswith("#"): continue
+                    s = line.strip()
+                    if s.startswith("- name:"):
+                        current = {"name": s.split(":",1)[1].strip(), "expect_hours": 0}
+                        ticks.append(current)
+                    elif s.startswith("expect_hours:") and current is not None:
+                        try:
+                            current["expect_hours"] = int(s.split(":",1)[1].strip())
+                        except ValueError:
+                            pass
+        except FileNotFoundError:
+            pass
+        return ticks
+
+def _gather_blocked_on_human():
+    """卡在我这的：查 needs-human 标签的 open issue + 根 HUMAN-TODO.md 未勾选条目。"""
+    items = []
+    p = gh("issue","list","-R",REPO,"--label","needs-human","--state","open",
+           "--limit","30","--json","number,title")
+    try:
+        for it in json.loads(p.stdout or "[]"):
+            items.append(f"- [ ] #{it['number']} {it['title']}")
+    except Exception:
+        pass
+    if not items:
+        items.append("- （当前无 needs-human 标签的 open issue）")
+    # 附加根 HUMAN-TODO.md 的未勾选条目（人工维护的长期清单）
+    root_todo = LOOP_ROOT / "HUMAN-TODO.md"
+    if root_todo.exists():
+        unchecked = []
+        for line in root_todo.read_text().splitlines():
+            if line.strip().startswith("### [ ]"):
+                # '### [ ] A1. ...' → '- [ ] A1. ...'（剥 '### ' 前缀，保留 checkbox）
+                unchecked.append(f"- {line.strip()[4:]}")
+        if unchecked:
+            items.append("")
+            items.append("**根 HUMAN-TODO.md 未勾选条目**（人工维护长期清单）：")
+            items.extend(unchecked)
+    return "\n".join(items)
+
+def _gather_released_yesterday():
+    """昨天放行的：最近 24h 合并的 PR。"""
+    since = (datetime.datetime.now(datetime.timezone.utc) -
+             datetime.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    p = gh("pr","list","-R",REPO,"--state","merged","--limit","50",
+           "--search",f"merged:>{since}","--json","number,title,mergedAt,author")
+    try:
+        prs = json.loads(p.stdout or "[]")
+    except Exception:
+        prs = []
+    if not prs:
+        return "- （最近 24h 无合并 PR）"
+    lines = []
+    for pr in prs:
+        lines.append(f"- #{pr['number']} {pr['title']} (@{pr.get('author',{}).get('login','?')})")
+    return "\n".join(lines)
+
+def _gather_degradations():
+    """什么退化了：CI 连败 + 存活超期 + 新开 Incident。"""
+    items = []
+    # 1. 控制面 workflow 最近 5 次 run 中的 failure
+    for wf in ("conductor.yml", "audit.yml", "canary.yml", "scribe.yml", "drift.yml"):
+        p = gh("run","list","-R",CONTROL_REPO,"--workflow",wf,"--limit","3",
+               "--json","conclusion,createdAt,displayTitle")
+        try:
+            runs = json.loads(p.stdout or "[]")
+        except Exception:
+            runs = []
+        fails = [r for r in runs if r.get("conclusion") == "failure"]
+        if fails:
+            items.append(f"- **{wf}** 连续 {len(fails)}/{len(runs)} failure（最近: {fails[0].get('createdAt','?')}）")
+    # 2. liveness 超期检测（读 liveness.yml 期望周期 vs 实际最近 run）
+    ticks = _load_liveness_config()
+    if ticks:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for t in ticks:
+            name = t.get("name","")
+            expect = t.get("expect_hours", 0)
+            if not name or expect <= 0: continue
+            p = gh("run","list","-R",CONTROL_REPO,"--workflow",f"{name}.yml",
+                   "--limit","1","--json","createdAt,conclusion")
+            try:
+                runs = json.loads(p.stdout or "[]")
+                if runs:
+                    created = _parse_utc_iso(runs[0]["createdAt"])
+                    age_h = (now - created).total_seconds() / 3600
+                    if age_h > expect:
+                        items.append(f"- **liveness 超期**: {name} 最近 run 在 {age_h:.1f}h 前（期望 ≤{expect}h）")
+                else:
+                    items.append(f"- **liveness 无 run**: {name} 从未运行过（期望 ≤{expect}h）")
+            except Exception:
+                pass
+    # 3. open Incident
+    p = gh("issue","list","-R",REPO,"--label","incident","--state","open",
+           "--limit","10","--json","number,title,createdAt")
+    try:
+        incs = json.loads(p.stdout or "[]")
+        for inc in incs:
+            items.append(f"- **Incident #{inc['number']}**: {inc['title']} ({inc.get('createdAt','?')})")
+    except Exception:
+        pass
+    if not items:
+        items.append("- （无退化：CI 无连败、liveness 全在期内、无 open Incident）")
+    return "\n".join(items)
+
+def _render_liveness_table():
+    """liveness 期望周期表（附在 digest 末尾，供人快速核对）。"""
+    ticks = _load_liveness_config()
+    if not ticks:
+        return "（.loop/liveness.yml 未找到 ticks 配置）"
+    lines = ["| workflow | 期望周期 |", "|---|---|"]
+    for t in ticks:
+        lines.append(f"| {t.get('name','?')} | {t.get('expect_hours','?')}h |")
+    return "\n".join(lines)
+
+def generate_digest():
+    """生成 .loop/HUMAN-TODO.md 四问（W0-5）。
+
+    读 .loop/templates/human-todo.md 模板，填入四问数据，写 .loop/HUMAN-TODO.md。
+    四问（手册 245 行）：
+      1. 卡在我这的 — needs-human 标签 issue + 根 HUMAN-TODO.md 未勾选条目
+      2. 昨天放行的 — 最近 24h 合并的 PR
+      3. 什么退化了 — CI 连败 + liveness 超期 + open Incident
+      4. 花了多少 — 成本占位"未接入"（WAVE-12 落地计量管道）
+    """
+    print("[12] Generate HUMAN-TODO.md digest (四问)...")
+    if not HUMAN_TODO_TEMPLATE.exists():
+        print(f"  → template not found: {HUMAN_TODO_TEMPLATE}")
+        return
+    tpl = HUMAN_TODO_TEMPLATE.read_text(encoding="utf-8")
+    rendered = tpl.replace("{{generated_at}}", datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"))
+    rendered = rendered.replace("{{blocked_on_human}}", _gather_blocked_on_human())
+    rendered = rendered.replace("{{released_yesterday}}", _gather_released_yesterday())
+    rendered = rendered.replace("{{degradations}}", _gather_degradations())
+    rendered = rendered.replace("{{cost}}", "- 未接入（LLM 用量与 CI 分钟数计量管道在 WAVE-12 落地）")
+    rendered = rendered.replace("{{liveness_table}}", _render_liveness_table())
+    HUMAN_TODO_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    HUMAN_TODO_OUTPUT.write_text(rendered, encoding="utf-8")
+    print(f"  → wrote {HUMAN_TODO_OUTPUT}")
+
+# ==================================================================
 # main
 # ==================================================================
 def main(argv=None):
@@ -822,6 +990,11 @@ def main(argv=None):
         print(f"[dry-run] LOOP_ROOT={LOOP_ROOT}")
         print(f"[dry-run] POLICY_FILE={POLICY_FILE}")
         print("[dry-run] exiting before any gh calls (no network).")
+        return
+    # W0-5: --generate-digest 只生成 .loop/HUMAN-TODO.md 四问，不走 tick 写操作。
+    # 与 freeze 守卫独立——digest 是只读聚合（gh query），即使波前冻结也该出报告。
+    if "--generate-digest" in args:
+        generate_digest()
         return
     print(f"repo: {REPO}, policy: {POLICY_FILE}")
     # W0-3 freeze 守卫：policy.freeze.all=true → 退出 0、日志 FROZEN、无写操作
