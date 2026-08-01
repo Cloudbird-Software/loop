@@ -169,7 +169,7 @@ items:
     seam: gate
     kind: action
     pin: "v4.5.0"
-    sha256: "b4b15b8c7c6ac21ea08fcf658082d78c9bdf267e"   # commit SHA（audit.yml / nightly-rubric.yml 引用）
+    sha256: "6f51ac03b9356f520e9adb1b1b7802705f340c2b"   # commit SHA（audit.yml / nightly-rubric.yml 引用）
     license: MIT
     degrade_path: "退回 actions/upload-artifact@v3 或不归档 artifact，丢失 evidence 留证"
     note: "R14-2 补登：nightly-rubric.yml 的 retro/promptfoo artifact 上传步骤引用；audit.yml / ci-security.yml 亦引用。ci-security.yml 另用 6f51ac03... SHA（同 tag v4.5.0 不同 commit，历史遗留），两者均为 v4.5.0。"

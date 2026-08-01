@@ -360,10 +360,17 @@ echo "=== Stage F: pinned-SHA checks ==="
 # f-a. every uses: line pins a 40-char SHA (offline proxy for pinact run --check)
 # 只认 YAML 里的 uses 键（`uses:` / `- uses:`），避免误伤 workflow 内嵌 Python run 块里
 # 出现的 "uses:" 字面量（如 pr-ci.yml 自带的 pin 检查脚本）。
+# 本地 reusable workflow 引用（以 ./ 开头）豁免——它们是仓内文件，无法 pin SHA。
 F_A=1
 while IFS= read -r line; do
   # extract the action ref after "uses:" up to the comment
   ref=$(printf '%s' "$line" | sed -E 's/.*uses:[[:space:]]*//; s/[[:space:]]*#.*//')
+  # Skip local reusable workflow references (e.g. ./.github/workflows/gates.yml)
+  case "$ref" in
+    ./* ) continue ;;
+    */*/* ) ;; # remote actions require pinning
+    * ) continue ;; # skip non-standard uses (shouldn't happen)
+  esac
   sha=$(printf '%s' "$ref" | sed -E 's/.*@//')
   if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
     echo "  FAIL: unpinned uses -> $line"
