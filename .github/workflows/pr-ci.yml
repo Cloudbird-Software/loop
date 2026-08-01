@@ -126,9 +126,13 @@ jobs:
       - name: Install pinact
         run: |
           set -euo pipefail
-          curl -sSL https://raw.githubusercontent.com/suzuki-shunsuke/pinact/main/scripts/install.sh | bash
+          PINACT_VERSION=4.1.1
+          curl -sSL "https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}/pinact_linux_amd64.tar.gz" -o /tmp/pinact.tar.gz
+          tar -xzf /tmp/pinact.tar.gz -C /tmp/
+          cp /tmp/pinact "$HOME/bin/"
+          chmod +x "$HOME/bin/pinact"
           export PATH="$HOME/bin:$PATH"
-          which pinact
+          pinact version
           echo "pinact ready"
 
       - name: "pinact — 检查 uses: 是否全部钉 SHA (not tag)"
