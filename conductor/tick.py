@@ -839,9 +839,12 @@ def _load_liveness_config():
                         try:
                             current["expect_hours"] = int(s.split(":",1)[1].strip())
                         except ValueError:
+                            # 非整数预期值：保留默认 0，best-effort 容错（CodeQL：非空 except）。
                             pass
         except FileNotFoundError:
-            pass
+            # fallback 解析阶段文件不存在：返回当前累积值（通常为空列表），
+            # 与函数末尾 return ticks 行为一致（CodeQL：非空 except）。
+            return ticks
         return ticks
 
 def _gather_blocked_on_human():
@@ -852,8 +855,10 @@ def _gather_blocked_on_human():
     try:
         for it in json.loads(p.stdout or "[]"):
             items.append(f"- [ ] #{it['number']} {it['title']}")
-    except Exception:
-        pass
+    except Exception as e:
+        # best-effort 采集：gh 调用失败或 JSON 解析异常时降级为空列表，
+        # 不中断 digest 生成（CodeQL：非空 except）。
+        print(f"[warn] _gather_blocked_on_human: {e}", file=sys.stderr)
     if not items:
         items.append("- （当前无 needs-human 标签的 open issue）")
     # 附加根 HUMAN-TODO.md 的未勾选条目（人工维护的长期清单）
@@ -890,7 +895,7 @@ def _gather_released_yesterday():
 def _gather_degradations():
     """什么退化了：CI 连败 + 存活超期 + 新开 Incident。"""
     items = []
-    # 1. 控制面 workflow 最近 5 次 run 中的 failure
+    # 1. 控制面 workflow 最近 3 次 run 中的 failure（--limit 3，与下方一致）
     for wf in ("conductor.yml", "audit.yml", "canary.yml", "scribe.yml", "drift.yml"):
         p = gh("run","list","-R",CONTROL_REPO,"--workflow",wf,"--limit","3",
                "--json","conclusion,createdAt,displayTitle")
@@ -920,8 +925,10 @@ def _gather_degradations():
                         items.append(f"- **liveness 超期**: {name} 最近 run 在 {age_h:.1f}h 前（期望 ≤{expect}h）")
                 else:
                     items.append(f"- **liveness 无 run**: {name} 从未运行过（期望 ≤{expect}h）")
-            except Exception:
-                pass
+            except Exception as e:
+                # best-effort 采集：单个 workflow 的 run 解析失败不影响总体扫描，
+                # 跳过该项继续下一个（CodeQL：非空 except）。
+                print(f"[warn] liveness {name}: {e}", file=sys.stderr)
     # 3. open Incident
     p = gh("issue","list","-R",REPO,"--label","incident","--state","open",
            "--limit","10","--json","number,title,createdAt")
@@ -929,8 +936,9 @@ def _gather_degradations():
         incs = json.loads(p.stdout or "[]")
         for inc in incs:
             items.append(f"- **Incident #{inc['number']}**: {inc['title']} ({inc.get('createdAt','?')})")
-    except Exception:
-        pass
+    except Exception as e:
+        # best-effort 采集：Incident 解析失败时降级为空，不中断 digest（CodeQL：非空 except）。
+        print(f"[warn] incidents: {e}", file=sys.stderr)
     if not items:
         items.append("- （无退化：CI 无连败、liveness 全在期内、无 open Incident）")
     return "\n".join(items)

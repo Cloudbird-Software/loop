@@ -16,3 +16,6 @@ __pycache__/
 .loop/session-ended
 .loop/body.tmp
 .loop/archive/
+# W0-5: HUMAN-TODO.md 是 tick --generate-digest 的产物，不应纳入版本控制
+# （模板在 .loop/templates/human-todo.md）。Code review #11。
+.loop/HUMAN-TODO.md
