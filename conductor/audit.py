@@ -129,8 +129,9 @@ def run_audit_shards():
                     try:
                         results = json.loads(pathlib.Path(ev_out).read_text() or '[]')
                     except Exception as e:
+                        print(f"LENS_OUTPUT_INVALID: {lens} ({e})", file=sys.stderr)
+                        LENS_FAILURES.append((sid, lens))
                         results = []
-            except Exception as e:
                 print(f"LENS_FAILED: {lens} ({e})", file=sys.stderr)
                 LENS_FAILURES.append((sid, lens))
                 results = []
