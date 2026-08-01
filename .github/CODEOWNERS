@@ -1,0 +1,33 @@
+# CODEOWNERS — 机制路径所有者
+# 修改以下路径需 @randypanding 评审
+# (CHARTER N5/N14：机制文件不自动修正；AGENTS.md "不可改的路径" 红线)
+#
+# 机制承重文件 / 控制面真源 —— 任何改动须 code owner 评审
+
+/loopd/                  @randypanding
+/conductor/              @randypanding
+/gates/                  @randypanding
+/lenses/                 @randypanding
+/prompts/                @randypanding
+/rules/                  @randypanding
+/pins/                   @randypanding
+/rubrics/                @randypanding
+/cards/                  @randypanding
+/waves/                  @randypanding
+/settings/               @randypanding
+/.github/workflows/      @randypanding
+
+# 单文件机制真源
+
+/CHARTER.md              @randypanding
+/policy.yml              @randypanding
+/ROUTING.yaml            @randypanding
+/UPSTREAM.yaml           @randypanding
+/flags.yml               @randypanding
+/exceptions.yml          @randypanding
+/.loop/exceptions.yml    @randypanding
+/escalation.yml          @randypanding
+/products.yml            @randypanding
+
+# 默认：仓库其他变更同样需 owner 评审（控制面仓整体受控）
+*                        @randypanding
