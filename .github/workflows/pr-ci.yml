@@ -120,7 +120,7 @@ jobs:
         # -shellcheck=，workflow 语法/cron/表达式校验仍完整生效；N11 无假绿。
         run: |
           set -euo pipefail
-          ./actionlint -shellcheck= .github/workflows/
+          ./actionlint -shellcheck= .github/workflows/*.yml
           echo "actionlint OK"
 
       - name: Install pinact
@@ -137,7 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/bin:$PATH"
-          pinact run -fix=false --no-api .github/workflows/
+          pinact run -fix=false --no-api .github/workflows/*.yml
           echo "pinact OK"
 
   # ============================================================
