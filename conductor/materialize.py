@@ -277,13 +277,12 @@ def validate(cards, charter_ids):
             aid = a.get("id", "?")
             bid = b.get("id", "?")
             if GLOB(a.get("paths",[]), b.get("paths",[])):
-                # Check if this conflict is exempted by blocked_by
-                exempt = (aid, bid) in dep_pairs or (bid, aid) in dep_pairs
-                if exempt:
-                    errors.append(f"Path conflict (EXEMPTED by blocked_by): {aid} and {bid}")
-                else:
-                    errors.append(f"Path conflict: {aid} and {bid}")
-    # Re-filter: remove ONLY cards that have non-exempted path conflicts
+                # Skip conflict if cards have a blocked_by dependency (can never run concurrently)
+                a_blocks_b = b.get("id") in (a.get("blocked_by") or [])
+                b_blocks_a = a.get("id") in (b.get("blocked_by") or [])
+                if not a_blocks_b and not b_blocks_a:
+                    errors.append(f"Path conflict: {a.get('id','?')} and {b.get('id','?')}")
+    # Re-filter: remove cards that have path conflicts
     conflict_ids = set()
     for e in errors:
         if "EXEMPTED" in e:
