@@ -128,8 +128,8 @@ fi
 echo ""
 echo "=== Stage G2: GLOB path-match (v0.1.6 dir/** fix) ==="
 G2G_OUT=$(python3 - <<'PY'
-import sys, fnmatch
-sys.path.insert(0, "/workspace/loopd")
+import os, sys, fnmatch
+sys.path.insert(0, os.environ["SMOKE_LOOPD"])
 import loopd
 G = loopd.GLOB
 cases = [
