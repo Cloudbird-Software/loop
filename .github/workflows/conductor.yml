@@ -28,3 +28,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_POLICY: policy.yml
+          # W0-3：显式注入 LOOP_ROOT，让 tick.resolve_loop_root() 优先取 checkout 目录
+          # （优先级 LOOP_ROOT > GITHUB_WORKSPACE > /workspace），与 tick.py 内的 freeze
+          # 守卫配合——freeze.all=true 时 tick 进程内即退出 0、无写操作（N2 负证）。
+          LOOP_ROOT: ${{ github.workspace }}

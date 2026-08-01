@@ -11,6 +11,17 @@
 """
 import ast, json, os, subprocess, sys, time, fnmatch, re, datetime, hashlib, pathlib, tempfile
 
+# W0-3 根因修复：直接运行 `python conductor/tick.py` 时 sys.path[0] 是 conductor/
+# 而非仓库根，导致 `from conductor.X import ...` 抛 ModuleNotFoundError（conductor
+# 10+ 连败根因，CI run 30684245290 traceback 指向 race_mode_handler line 738 的
+# `from conductor.claim_intake import is_claim_pickable_by_impl`）。把仓库根插入
+# sys.path，使 conductor.* 包导入在直接运行与 `python -m conductor.tick` 模式下都
+# 可用。与下方 try/except fallback 互补（后者仅兜底 blocks，本修复根治所有
+# conductor.* 导入，包括 race_mode_handler 内的延迟导入）。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 try:
     from conductor.blocks import extract_block, inject_block
 except ImportError:
@@ -813,6 +824,15 @@ def main(argv=None):
         print("[dry-run] exiting before any gh calls (no network).")
         return
     print(f"repo: {REPO}, policy: {POLICY_FILE}")
+    # W0-3 freeze 守卫：policy.freeze.all=true → 退出 0、日志 FROZEN、无写操作
+    # （波前冻结，满足 wave 负证 N2：freeze.all=true 时 tick 退出 0、日志 FROZEN、
+    # 无写操作）。与 conductor.yml 的 Freeze guard step 互补：workflow 级先拦，
+    # 此处为 tick 进程内 defense-in-depth，保证无论何种调用方式（cron /
+    # workflow_dispatch / 手动 `python conductor/tick.py`）都 honor freeze。
+    _freeze = POLICY.get("freeze", {}) or {}
+    if _freeze.get("all"):
+        print("FROZEN: policy.freeze.all=true, skipping tick writes (wave frozen)")
+        return
     zombie_reclaim()
     escalate()
     unblock_deps()
