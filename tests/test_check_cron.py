@@ -5,7 +5,6 @@
 
 运行：python tests/test_check_cron.py  或  pytest tests/test_check_cron.py -q
 """
-import os
 import sys
 import pathlib
 import importlib.util
