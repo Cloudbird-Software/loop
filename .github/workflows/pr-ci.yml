@@ -63,7 +63,10 @@ jobs:
           python - <<'PY'
           import re, json, sys, subprocess, os
 
-          card_id = sys.argv[1]
+          card_id = os.environ.get('CARD_ID', '')
+          if not card_id:
+              print("FAIL: CARD_ID environment variable not set")
+              sys.exit(1)
           all_blocks = []
 
           # 列出 origin/main 上的所有 waves/*.md
