@@ -11,6 +11,8 @@
 - 沙盒守护进程规格：`loopd/SPEC.md`
 - 凭证清单：`docs/密钥清单.md`
 - 环境变量清单：`docs/环境变量清单.md`（新沙盒只需设 5 个变量）
+- 人类操作手册（执行化）：`loop控制面建设-人类操作手册.md`
+- 架构改造结论（为什么）：`loop架构改造最终结论与工程建议.md`
 
 ## 你的角色
 
@@ -25,6 +27,12 @@
 | `planner` | 造 Wave PR（只改 `waves/**`） | `prompts/P3.md` |
 | `reviewer` | 强模型验收环：产可证伪 claim（不产 PASS/FAIL） | `prompts/P1.md` |
 | `reproducer` | 对 claim 做异构复现（三态：REPRODUCED / NOT_REPRODUCED / INCONCLUSIVE） | 见 `docs/强模型验收环.md` |
+| `plan` | 波次规划卡 | `prompts/P3.md` |
+| `lead` | 契约/共享路径卡 | `prompts/P-lead.md`（W1 创建） |
+| `spec-test` | T 卡（测试先行） | `prompts/P-spec-test.md`（W1 创建） |
+| `redteam` | 红队攻击卡 | `prompts/P-redteam.md`（W2 创建） |
+| `mechanism` | 机制路径卡（meta profile） | `prompts/P-mechanism.md`（W1 创建） |
+| `mech` | 机械性变更卡 | `prompts/P-mech.md`（W1 创建） |
 
 `LOOP_ROLE` 可逗号组合（如 `plan,ops`）。`P-continue.md` 是"继续"入口，加载它即自动扫卡、领卡、推进状态机。
 
@@ -47,6 +55,9 @@
   `bench/metrics.py`、`loopd/loopd.py`、`conductor/loop_pin.py` —— 承重文件，改动须走对应卡片授权。
 - `cards/`（已冻结只读归档，ADR-011）—— 不得手改，状态推进只走 `loopd`。
 - `products.yml`（产品仓注册表，CHARTER N10：AI 不得自行增删）。
+- `flags.yml`、`exceptions.yml`（即 `.loop/exceptions.yml`）、`UPSTREAM.yaml`。
+- `rules/`（Semgrep 自研规则目录，W1 创建）、`pins/`（pin 白名单目录，W0 已创建）。
+- `escalation.yml`（W2 创建）、`rubrics/`（W4 创建）。
 
 ## 必须遵守的红线（CHARTER N 段摘要）
 
@@ -74,6 +85,24 @@
 | `prompts/P5.md` … `P12.md` | 其余角色与场景（按需读） |
 
 领卡后**先读该卡 `role` 对应的提示词**，再动手。
+
+## 过渡期说明（W0-W3）
+
+当前处于 W0-W3 过渡期，卡片载体和状态存储与最终态不同：
+
+- **卡片载体**：卡片以 `waves/WAVE-XX.md` 中的 ` ```json loop ` 块为载体，由
+  materializer（`conductor/materialize.py`）物化到 GitHub Issue。
+- **状态存储**（W0-W1）：卡的权威状态在 loop 仓的 `waves/WAVE-XX.md` json loop
+  块中（含 `state`/`lease_until`/`heartbeat_at`/`attempt`/`model` 字段）。
+- **状态存储**（W2+）：权威状态迁移到 `loop-state` orphan 分支（git ref CAS），
+  GitHub Issue 是投影镜像。
+- **命令可用性**：loopd CLI 尚在修复中（BROKEN-01），W0 期间 agent 可回退到
+  gh/git 手动推进（见 P-continue.md 第 10 节）。
+
+权威参考文档：
+- `loop控制面建设-人类操作手册.md`（执行化：做什么、怎么做）
+- `loop架构改造最终结论与工程建议.md`（结论与为什么）
+- 两文档冲突时以人类操作手册为准。
 
 ## 如何领一张卡
 
@@ -105,5 +134,7 @@ loopd next      # CAS 原子领卡：state ready→in_progress + 设租约 + 切
 5. 不在 verify FAIL 时强行合并或强行 PASS。
 6. 不问用户问题、不等用户回复——有疑问按 `acceptance` 字面最小实现，把疑问写进评论留给下个 AI。
 7. 不自己造卡塞进队列（造卡是 planner 的活），除非处理 F-0NN 建修复卡或 verify 建 F-0NN。
-8. 不手改 `cards/` 归档文件（已冻结，R10-5）。
+8. 不手改 `cards/` 归档文件（已冻结，R10-5）；不手改 `waves/WAVE-XX.md` 中已被
+   materializer 物化的 `json loop` 卡块（状态推进只走 loopd 或 intent 通道）；
+   不直接在 GitHub Issue 上修改 `json loop` 块的状态字段。
 9. 不在同会话内既 impl 又 verify（N12）。

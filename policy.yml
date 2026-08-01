@@ -22,6 +22,16 @@ execute:
     cpu_shares: 512              # CPU 权重
     network: read_only           # 只读网络（可拉取但不可写生产仓）
     writable_paths: [/tmp]       # 仅允许写 /tmp（无生产仓库写权限）
+freeze:
+  all: false
+  chains: []
+silent_release:
+  window_hours: 168          # 48h→168h 收缩（结论文档 §3.5 裁决）
+  auto_merge: false           # W3 后可改为 true（仅 trivial 子集）
+  prerequisites:              # 全部满足才放行
+    - all_gates_green
+    - whitelist_paths_only
+    - weekly_quota_remaining
 upstream:
   min_age_days: 7
   trigger: on_wave_open          # ★不按周
@@ -67,8 +77,6 @@ gates:
   timeouts:                      # 按 gate 名覆盖
     verdict: 180
   search_dirs:                   # gate 文件解析顺序（先到先得），三处都找不到才算缺席
-    - gates
-    - .loop/gates
     - ${LOOP_ROOT}/gates
   profiles:
     default:                     # loop 仓全集（与 settings/*-main-protection.json required_status_checks 对齐）
@@ -82,7 +90,30 @@ gates:
       - verdict
       - lockdiff
       - heterogeneity
+      # W1 新增（gate 实现后加入）：
+      # - doc_drift
+      # - semgrep
+      # - secrets
+      # - ratchet
+      # - pin_integrity
+      # W2 新增：
+      # - epoch
+      # - wave_immutable
+      # - schema_singlesource
+      # W3 新增：
+      # - card_provenance
+      # - ac_binding
+      # - diff_hygiene
+      # - traceability
+      # - contract
+      # - flag
+      # - sbom
+      # W4 新增：
+      # - redproof
+      # - mutation_delta
+      # - rubric
     strict:                      # 产品仓全集（含 conformance；LOOP.yml gates.profile: strict）
+      # 同 default + conformance + 以下（按波次同步）
       - charter
       - diffsize
       - license
