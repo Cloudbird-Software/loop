@@ -11,34 +11,58 @@
 
 运行：python tests/test_w0_5_digest.py
 """
-import os, sys, tempfile, pathlib, importlib
+import os, sys, tempfile, pathlib, importlib, shutil
 
 HERE = pathlib.Path(__file__).resolve().parent
 WORKSPACE = HERE.parent
 
-# 用独立临时 LOOP_ROOT，避免污染仓库真实 .loop/。
-TMP = pathlib.Path(tempfile.mkdtemp(prefix="w05-digest-test-"))
-os.environ["LOOP_ROOT"] = str(TMP)
-os.environ["LOOP_POLICY"] = str(TMP / "policy.yml")
-os.environ["GH_TOKEN"] = "dummy"
-os.environ.setdefault("LOOP_ORG", "test-org")
-os.environ.setdefault("LOOP_REPO", "test-repo")
-sys.path.insert(0, str(WORKSPACE))
 
-# 写一份最小 policy.yml（freeze.all=false），供 tick 模块加载
-(TMP / "policy.yml").write_text("freeze:\n  all: false\n")
+def _setup_env():
+    """为单个测试搭建隔离环境，返回 (tmp_dir, tick_module, cleanup_fn)。
 
-from conductor import tick as T
+    Copilot review：原实现把 os.environ / sys.path 突变放在模块级，
+    pytest 收集时即生效，会泄漏到其他测试造成顺序依赖。
+    改为 per-test setup，每次调用都创建全新临时目录、保存/恢复环境变量。
+    """
+    saved_env = os.environ.copy()
+    saved_path = sys.path[:]
+
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="w05-digest-test-"))
+    os.environ["LOOP_ROOT"] = str(tmp)
+    os.environ["LOOP_POLICY"] = str(tmp / "policy.yml")
+    os.environ["GH_TOKEN"] = "dummy"
+    os.environ.setdefault("LOOP_ORG", "test-org")
+    os.environ.setdefault("LOOP_REPO", "test-repo")
+
+    if str(WORKSPACE) not in sys.path:
+        sys.path.insert(0, str(WORKSPACE))
+
+    (tmp / "policy.yml").write_text("freeze:\n  all: false\n")
+
+    # 懒加载 tick 模块，确保它在正确的环境变量下被 import
+    if "conductor.tick" in sys.modules:
+        tick_module = importlib.reload(sys.modules["conductor.tick"])
+    else:
+        from conductor import tick as tick_module
+
+    def cleanup():
+        os.environ.clear()
+        os.environ.update(saved_env)
+        sys.path[:] = saved_path
+        if tmp.exists():
+            shutil.rmtree(str(tmp), ignore_errors=True)
+
+    return tmp, tick_module, cleanup
 
 
-def _reload_tick_with_root(root):
+def _reload_tick_with_root(tick_module, root):
     """重新 import tick 使其 LOOP_ROOT 指向 root（模块级常量在 import 时绑定）。
 
-    reload 前 显式更新 LOOP_ROOT 环境变量，确保 tick.resolve_loop_root() 在
+    reload 前显式更新 LOOP_ROOT 环境变量，确保 tick.resolve_loop_root() 在
     重新加载时读到新值（Copilot review：原实现未用 root 参数，docstring 与行为不符）。
     """
     os.environ["LOOP_ROOT"] = str(root)
-    importlib.reload(T)
+    return importlib.reload(tick_module)
 
 
 def setup_liveness(root, ticks):
@@ -63,29 +87,37 @@ def setup_template(root, body):
 # TC-LIV-1: 正常解析
 # ==================================================================
 def test_liveness_normal_parse():
-    _reload_tick_with_root(TMP)
-    setup_liveness(TMP, [
-        {"name": "conductor", "expect_hours": 1},
-        {"name": "audit", "expect_hours": 30},
-    ])
-    ticks = T._load_liveness_config()
-    assert len(ticks) == 2, f"expected 2 ticks, got {len(ticks)}: {ticks}"
-    assert ticks[0]["name"] == "conductor" and ticks[0]["expect_hours"] == 1
-    assert ticks[1]["name"] == "audit" and ticks[1]["expect_hours"] == 30
-    print("TC-LIV-1 PASS: normal parse returns 2 ticks with correct fields")
+    tmp, T, cleanup = _setup_env()
+    try:
+        T = _reload_tick_with_root(T, tmp)
+        setup_liveness(tmp, [
+            {"name": "conductor", "expect_hours": 1},
+            {"name": "audit", "expect_hours": 30},
+        ])
+        ticks = T._load_liveness_config()
+        assert len(ticks) == 2, f"expected 2 ticks, got {len(ticks)}: {ticks}"
+        assert ticks[0]["name"] == "conductor" and ticks[0]["expect_hours"] == 1
+        assert ticks[1]["name"] == "audit" and ticks[1]["expect_hours"] == 30
+        print("TC-LIV-1 PASS: normal parse returns 2 ticks with correct fields")
+    finally:
+        cleanup()
 
 
 # ==================================================================
 # TC-LIV-2: 文件缺失返回 []
 # ==================================================================
 def test_liveness_missing_file():
-    _reload_tick_with_root(TMP)
-    lp = TMP / ".loop" / "liveness.yml"
-    if lp.exists():
-        lp.unlink()
-    ticks = T._load_liveness_config()
-    assert ticks == [], f"expected [] for missing file, got {ticks}"
-    print("TC-LIV-2 PASS: missing file returns []")
+    tmp, T, cleanup = _setup_env()
+    try:
+        T = _reload_tick_with_root(T, tmp)
+        lp = tmp / ".loop" / "liveness.yml"
+        if lp.exists():
+            lp.unlink()
+        ticks = T._load_liveness_config()
+        assert ticks == [], f"expected [] for missing file, got {ticks}"
+        print("TC-LIV-2 PASS: missing file returns []")
+    finally:
+        cleanup()
 
 
 # ==================================================================
@@ -95,18 +127,22 @@ def test_liveness_missing_file():
 #   两种路径都不应中断，且 good 项始终正确解析为 5。
 # ==================================================================
 def test_liveness_non_integer_expect_hours():
-    _reload_tick_with_root(TMP)
-    lp = TMP / ".loop" / "liveness.yml"
-    lp.parent.mkdir(parents=True, exist_ok=True)
-    lp.write_text("ticks:\n  - name: bad\n    expect_hours: abc\n  - name: good\n    expect_hours: 5\n")
-    ticks = T._load_liveness_config()
-    assert len(ticks) == 2, f"expected 2 ticks, got {len(ticks)}: {ticks}"
-    good = [t for t in ticks if t["name"] == "good"][0]
-    assert good["expect_hours"] == 5, f"good expect_hours should be 5, got {good['expect_hours']}"
-    # bad 项：PyYAML 路径返回字符串 "abc"，fallback 路径返回 0；两者都不抛异常即可
-    bad = [t for t in ticks if t["name"] == "bad"][0]
-    assert bad["expect_hours"] in (0, "abc"), f"bad expect_hours should be 0 or 'abc', got {bad['expect_hours']}"
-    print(f"TC-LIV-3 PASS: non-integer expect_hours tolerated (bad={bad['expect_hours']!r}, good=5)")
+    tmp, T, cleanup = _setup_env()
+    try:
+        T = _reload_tick_with_root(T, tmp)
+        lp = tmp / ".loop" / "liveness.yml"
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        lp.write_text("ticks:\n  - name: bad\n    expect_hours: abc\n  - name: good\n    expect_hours: 5\n")
+        ticks = T._load_liveness_config()
+        assert len(ticks) == 2, f"expected 2 ticks, got {len(ticks)}: {ticks}"
+        good = [t for t in ticks if t["name"] == "good"][0]
+        assert good["expect_hours"] == 5, f"good expect_hours should be 5, got {good['expect_hours']}"
+        # bad 项：PyYAML 路径返回字符串 "abc"，fallback 路径返回 0；两者都不抛异常即可
+        bad = [t for t in ticks if t["name"] == "bad"][0]
+        assert bad["expect_hours"] in (0, "abc"), f"bad expect_hours should be 0 or 'abc', got {bad['expect_hours']}"
+        print(f"TC-LIV-3 PASS: non-integer expect_hours tolerated (bad={bad['expect_hours']!r}, good=5)")
+    finally:
+        cleanup()
 
 
 # ==================================================================
@@ -115,52 +151,62 @@ def test_liveness_non_integer_expect_hours():
 #   修复后强制 int() 转换，转换失败按 0 跳过该项。
 # ==================================================================
 def test_degradations_non_integer_expect_no_crash():
-    _reload_tick_with_root(TMP)
-    lp = TMP / ".loop" / "liveness.yml"
-    lp.parent.mkdir(parents=True, exist_ok=True)
-    lp.write_text("ticks:\n  - name: bad\n    expect_hours: abc\n")
-    setup_template(TMP, "{{degradations}}")
-    # monkeypatch gh 返回空 run 列表，聚焦验证类型守卫而非网络
-    orig_gh = T.gh
-    T.gh = lambda *a, **kw: type("R", (), {"stdout": "[]", "stderr": "", "returncode": 0})()
+    tmp, T, cleanup = _setup_env()
     try:
-        T.generate_digest()  # 不应抛 TypeError
+        T = _reload_tick_with_root(T, tmp)
+        lp = tmp / ".loop" / "liveness.yml"
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        lp.write_text("ticks:\n  - name: bad\n    expect_hours: abc\n")
+        setup_template(tmp, "{{degradations}}")
+        # monkeypatch gh 返回空 run 列表，聚焦验证类型守卫而非网络
+        orig_gh = T.gh
+        T.gh = lambda *a, **kw: type("R", (), {"stdout": "[]", "stderr": "", "returncode": 0})()
+        try:
+            T.generate_digest()  # 不应抛 TypeError
+        finally:
+            T.gh = orig_gh
+        out = tmp / ".loop" / "HUMAN-TODO.md"
+        assert out.exists(), "digest should still be written despite non-integer expect_hours"
+        print("TC-LIV-4 PASS: non-integer expect_hours in degradations does not crash digest")
     finally:
-        T.gh = orig_gh
-    out = TMP / ".loop" / "HUMAN-TODO.md"
-    assert out.exists(), "digest should still be written despite non-integer expect_hours"
-    print("TC-LIV-4 PASS: non-integer expect_hours in degradations does not crash digest")
+        cleanup()
 
 
 # ==================================================================
 # TC-DIG-1: 模板缺失 → 优雅降级（打印提示，不抛异常）
 # ==================================================================
 def test_digest_template_missing():
-    _reload_tick_with_root(TMP)
-    # 确保模板不存在
-    tpl = TMP / ".loop" / "templates" / "human-todo.md"
-    if tpl.exists():
-        tpl.unlink()
-    # 清掉前序测试可能残留的输出文件，避免误判
-    out = TMP / ".loop" / "HUMAN-TODO.md"
-    if out.exists():
-        out.unlink()
-    # 不应抛异常，且不应生成输出文件
-    T.generate_digest()
-    assert not out.exists(), "HUMAN-TODO.md should NOT be written when template missing"
-    print("TC-DIG-1 PASS: missing template → graceful degradation, no exception, no output file")
+    tmp, T, cleanup = _setup_env()
+    try:
+        T = _reload_tick_with_root(T, tmp)
+        # 确保模板不存在
+        tpl = tmp / ".loop" / "templates" / "human-todo.md"
+        if tpl.exists():
+            tpl.unlink()
+        # 清掉前序测试可能残留的输出文件，避免误判
+        out = tmp / ".loop" / "HUMAN-TODO.md"
+        if out.exists():
+            out.unlink()
+        # 不应抛异常，且不应生成输出文件
+        T.generate_digest()
+        assert not out.exists(), "HUMAN-TODO.md should NOT be written when template missing"
+        print("TC-DIG-1 PASS: missing template → graceful degradation, no exception, no output file")
+    finally:
+        cleanup()
 
 
 # ==================================================================
 # TC-DIG-2: 正常渲染 → 占位符全部替换
 # ==================================================================
 def test_digest_normal_render():
-    _reload_tick_with_root(TMP)
-    # 清掉 liveness.yml 避免 _gather_degradations 里 age_h > expect 类型比较失败
-    lp = TMP / ".loop" / "liveness.yml"
-    if lp.exists():
-        lp.unlink()
-    template = """# HUMAN-TODO @ {{generated_at}}
+    tmp, T, cleanup = _setup_env()
+    try:
+        T = _reload_tick_with_root(T, tmp)
+        # 清掉 liveness.yml 避免 _gather_degradations 里 age_h > expect 类型比较失败
+        lp = tmp / ".loop" / "liveness.yml"
+        if lp.exists():
+            lp.unlink()
+        template = """# HUMAN-TODO @ {{generated_at}}
 
 ## 1. 卡在我这的
 {{blocked_on_human}}
@@ -177,45 +223,51 @@ def test_digest_normal_render():
 ## liveness
 {{liveness_table}}
 """
-    setup_template(TMP, template)
-    # monkeypatch gh 让 _gather_* 走降级路径（避免真实网络调用）
-    orig_gh = T.gh
-    T.gh = lambda *a, **kw: type("R", (), {"stdout": "[]", "stderr": "", "returncode": 0})()
-    try:
-        T.generate_digest()
+        setup_template(tmp, template)
+        # monkeypatch gh 让 _gather_* 走降级路径（避免真实网络调用）
+        orig_gh = T.gh
+        T.gh = lambda *a, **kw: type("R", (), {"stdout": "[]", "stderr": "", "returncode": 0})()
+        try:
+            T.generate_digest()
+        finally:
+            T.gh = orig_gh
+        out = tmp / ".loop" / "HUMAN-TODO.md"
+        assert out.exists(), "HUMAN-TODO.md should be written"
+        content = out.read_text(encoding="utf-8")
+        # 占位符全部被替换（不应残留 {{...}}）
+        assert "{{" not in content and "}}" not in content, f"unreplaced placeholders remain: {content}"
+        # 含四问标题
+        assert "卡在我这的" in content
+        assert "昨天放行的" in content
+        assert "什么退化了" in content
+        assert "花了多少" in content
+        print("TC-DIG-2 PASS: normal render replaces all placeholders, four questions present")
     finally:
-        T.gh = orig_gh
-    out = TMP / ".loop" / "HUMAN-TODO.md"
-    assert out.exists(), "HUMAN-TODO.md should be written"
-    content = out.read_text(encoding="utf-8")
-    # 占位符全部被替换（不应残留 {{...}}）
-    assert "{{" not in content and "}}" not in content, f"unreplaced placeholders remain: {content}"
-    # 含四问标题
-    assert "卡在我这的" in content
-    assert "昨天放行的" in content
-    assert "什么退化了" in content
-    assert "花了多少" in content
-    print("TC-DIG-2 PASS: normal render replaces all placeholders, four questions present")
+        cleanup()
 
 
 # ==================================================================
 # TC-DIG-3: gh 失败容错（_gather_* 降级不中断渲染）
 # ==================================================================
 def test_digest_gh_failure_tolerant():
-    _reload_tick_with_root(TMP)
-    setup_template(TMP, "{{blocked_on_human}}\n{{degradations}}")
-    # monkeypatch gh 抛异常模拟调用失败
-    orig_gh = T.gh
-    def boom(*a, **kw):
-        raise RuntimeError("network down")
-    T.gh = boom
+    tmp, T, cleanup = _setup_env()
     try:
-        T.generate_digest()
+        T = _reload_tick_with_root(T, tmp)
+        setup_template(tmp, "{{blocked_on_human}}\n{{degradations}}")
+        # monkeypatch gh 抛异常模拟调用失败
+        orig_gh = T.gh
+        def boom(*a, **kw):
+            raise RuntimeError("network down")
+        T.gh = boom
+        try:
+            T.generate_digest()
+        finally:
+            T.gh = orig_gh
+        out = tmp / ".loop" / "HUMAN-TODO.md"
+        assert out.exists(), "HUMAN-TODO.md should still be written even if gh fails"
+        print("TC-DIG-3 PASS: gh failure tolerated, digest still rendered")
     finally:
-        T.gh = orig_gh
-    out = TMP / ".loop" / "HUMAN-TODO.md"
-    assert out.exists(), "HUMAN-TODO.md should still be written even if gh fails"
-    print("TC-DIG-3 PASS: gh failure tolerated, digest still rendered")
+        cleanup()
 
 
 if __name__ == "__main__":

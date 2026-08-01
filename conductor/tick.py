@@ -911,7 +911,7 @@ def _gather_degradations():
             runs = []
         fails = [r for r in runs if r.get("conclusion") == "failure"]
         if fails:
-            items.append(f"- **{wf}** 连续 {len(fails)}/{len(runs)} failure（最近: {fails[0].get('createdAt','?')}）")
+            items.append(f"- **{wf}** 最近 {len(fails)}/{len(runs)} 次为 failure（最近: {fails[0].get('createdAt','?')}）")
     # 2. liveness 超期检测（读 liveness.yml 期望周期 vs 实际最近 run）
     ticks = _load_liveness_config()
     if ticks:

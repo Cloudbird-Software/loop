@@ -15,16 +15,22 @@ jobs:
         with: {app-id: "${{ secrets.CONDUCTOR_APP_ID }}", private-key: "${{ secrets.CONDUCTOR_APP_KEY }}", owner: "${{ github.repository_owner }}"}
       - run: pip install --require-hashes -r requirements.txt
       - name: Freeze guard
+        id: freeze
         run: |
           python3 - <<'PY'
-          import yaml, sys
+          import yaml, sys, os
           p = yaml.safe_load(open('policy.yml'))
           if p.get('freeze', {}).get('all'):
               print('FROZEN: wave frozen, skip tick')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write('frozen=true\n')
               sys.exit(0)
           print('not frozen, proceed')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('frozen=false\n')
           PY
       - run: python conductor/tick.py
+        if: steps.freeze.outputs.frozen == 'false'
         env:
           GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_POLICY: policy.yml
