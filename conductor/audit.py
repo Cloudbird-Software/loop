@@ -37,10 +37,12 @@ def run_audit_shards():
     """
     # 延迟导入：与原 heredoc 一致（在循环内 import）；同时避免模块加载期就触发
     # conductor.tick 的 module-level 副作用（load_policy 等）。
-    from conductor.tick import _load_audit_state, _save_audit_state
+    from conductor.tick import _load_audit_state, _save_audit_state, resolve_loop_root
     from conductor.findings import create_finding, find_open_finding, update_finding, fingerprint
 
-    LOOP = pathlib.Path(os.environ['LOOP_ROOT'])
+    # 复用 tick.resolve_loop_root() 的优先级（LOOP_ROOT > GITHUB_WORKSPACE > /workspace），
+    # 避免 os.environ['LOOP_ROOT'] 在本地/单测未设置时抛 KeyError（CodeQL/Copilot 建议）。
+    LOOP = resolve_loop_root()
     TODAYS = LOOP / '.loop' / 'audit' / 'today_shards.json'
     QUOTA_RUNS = []
     NEW_FINDINGS = []
@@ -64,7 +66,6 @@ def run_audit_shards():
             print(f'shard {sid}: diff failed {e}')
         for lens in sh.get('lenses', []):
             script_sh = LOOP / 'lenses' / f'{lens}.sh'
-            script_md = LOOP / 'lenses' / f'{lens}.md'
             if not script_sh.exists():
                 # R14-1：缺脚本不再静默跳过——记录失败，循环结束后整体 exit 1
                 print(f'LENS_NOT_EXECUTED: {lens}')
@@ -83,8 +84,10 @@ def run_audit_shards():
             with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as f:
                 ev_out = f.name
             # 调用 lens 脚本（约定：lens <ev_in.json> <ev_out.json>）
+            # subprocess.run 返回值不绑定到变量：返回值此处未使用（results 从 ev_out
+            # 解析），绑定只会触发"variable defined multiple times"告警（CodeQL）。
             try:
-                r = subprocess.run(
+                subprocess.run(
                     ['bash', str(script_sh), ev_in, ev_out],
                     capture_output=True, text=True, timeout=300,
                     cwd=str(LOOP))
@@ -145,12 +148,15 @@ def run_audit_shards():
             QUOTA_RUNS.append({'shard': sid, 'lens': lens,
                                'diff_paths_count': len(diff_paths),
                                'results_count': len(results)})
-            # 清理临时
+            # 清理临时文件：best-effort，文件可能已被删除或不存在，忽略 FileNotFoundError
+            # 即可；其他异常也不应中断审计主流程，故仅记录不抛出（CodeQL：非空 except）。
             for _p in [ev_in, ev_out]:
                 try:
                     pathlib.Path(_p).unlink()
-                except Exception:
-                    pass
+                except FileNotFoundError:
+                    pass  # 文件已不存在，正常情况
+                except OSError as e:
+                    print(f"cleanup { _p }: {e}", file=sys.stderr)
     # 汇总输出
     summary = {
         'generated_at': _now_iso(),
