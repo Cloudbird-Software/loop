@@ -58,7 +58,6 @@
     "AC-5: 代码中定义了退出码常量（OK=0, REFUSED=10, GATE=11, UNKNOWN_VERB=64, CRASH=70, ENV=78）"
   ],
   "blocked_by": [],
-  "model_hint": "qwen-max",
   "budget": 1.0,
   "state": "ready",
   "claim_id": null,
@@ -97,7 +96,6 @@
     "AC-5: VERDICT 写为 .loop/schemas/verdict.json，含 card_id=W1-1 + 证据清单"
   ],
   "blocked_by": ["W1-1"],
-  "model_hint": "moonshot/kimi-k2.7",
   "budget": 0.5,
   "state": "ready",
   "claim_id": null,
@@ -144,7 +142,6 @@
     "AC-4: 元测试断言 test_cli_contract.py 未直接 import loopd 内部模块"
   ],
   "blocked_by": ["W1-1"],
-  "model_hint": "qwen-max",
   "budget": 0.8,
   "state": "ready",
   "claim_id": null,
@@ -205,7 +202,6 @@
     "AC-4: prompts 中不存在 loopd claim / loopd reaper 等不存在的动词"
   ],
   "blocked_by": ["W1-1"],
-  "model_hint": "seed-2.1-turbo",
   "budget": 0.8,
   "state": "ready",
   "claim_id": null,
@@ -259,7 +255,6 @@
     "AC-5（负证）: 在 search_dirs 范围外放置假 gate 文件，run_gates 解析必须 FAIL 且拒不加载"
   ],
   "blocked_by": ["W0-2"],
-  "model_hint": "qwen-max",
   "budget": 0.5,
   "state": "ready",
   "claim_id": null,
@@ -315,7 +310,6 @@
     "AC-5（负证）: 对含 ghp_ 形态 PAT 的构造输入调用 gate_secrets.py 必须返回 FAIL（禁止 fail-open）"
   ],
   "blocked_by": ["W1-4"],
-  "model_hint": "qwen-max",
   "budget": 1.0,
   "state": "ready",
   "claim_id": null,
@@ -377,7 +371,6 @@
     "AC-5（负证）: 塞入 silent-swallow 样本时 gate_semgrep.py 必须 FAIL（--error 生效，禁止漏报）"
   ],
   "blocked_by": ["W1-4"],
-  "model_hint": "qwen-max",
   "budget": 1.0,
   "state": "ready",
   "claim_id": null,
@@ -406,6 +399,7 @@
   ],
   "forbid_paths": [
     ".github/**",
+    "CHARTER.md",
     "policy.yml",
     "prompts/**",
     "gates/gate_doc_drift.py",
@@ -431,7 +425,6 @@
     "AC-4: gate_ratchet.py 允许配置变严格（棘轮正转）"
   ],
   "blocked_by": [],
-  "model_hint": "qwen-max",
   "budget": 0.8,
   "state": "ready",
   "claim_id": null,
@@ -487,7 +480,6 @@
     "AC-5（负证）: 篡改用例（uses: 与 with: loop-sha 不一致 / 非祖先 SHA）时 gate_pin_integrity.py 必须 FAIL"
   ],
   "blocked_by": [],
-  "model_hint": "qwen-max",
   "budget": 1.0,
   "state": "ready",
   "claim_id": null,
@@ -507,7 +499,7 @@
   "id": "W1-9",
   "wave": "WAVE-01",
   "objective": "canary corpus v1 上线：C01-C12 故障样本 + canary.yml 扩展",
-  "tier": "standard",
+  "tier": "critical",
   "role": "impl",
   "paths": [
     "bench/faults/C01-gate-injection.yml",
@@ -527,7 +519,6 @@
   "forbid_paths": [
     ".github/workflows/pr-ci.yml",
     ".github/workflows/reusable-gates.yml",
-    ".github/**",
     "CHARTER.md",
     "policy.yml",
     "prompts/**",
@@ -551,7 +542,6 @@
     "AC-5: canary/results.json 满足 length==12 且全部 .intercepted=true（C01-C12 首次全部拦截）"
   ],
   "blocked_by": ["W1-5", "W1-6"],
-  "model_hint": "qwen-max",
   "budget": 1.0,
   "state": "ready",
   "claim_id": null,
