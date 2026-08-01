@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    commit-message:
+      prefix: "chore(actions):"
+      prefix-development: "chore(actions):"
+    groups:
+      - dependency-type: production
+      - dependency-type: development
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    commit-message:
+      prefix: "chore(pip):"
+      prefix-development: "chore(pip):"
+    labels:
+      - "dependencies"
