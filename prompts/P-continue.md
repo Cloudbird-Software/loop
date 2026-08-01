@@ -21,9 +21,9 @@ impl 完成的工作卡必须由**另一个沙盒的 verify** 独立验证。同
 1. 通过 `loopd` 领卡（CAS 原子操作 + 租约），或用 `gh issue list -R Cloudbird-Software/product-x
    --search "state:ready status:pending" --label card` 查询可领的卡。
    - 过渡期（W0-W1）：卡的权威状态在 **loop 仓的 `waves/WAVE-XX.md`** 的
-    `json loop` 块里（含 `state`/`lease_until`/`heartbeat_at`/`attempt`/`model`）。
-  - 最终态（W2+）：权威状态在 `loop-state` orphan 分支，GitHub Issue 是投影镜像。
-  - `cards/` 本地目录已于 2026-07-30 冻结为只读归档（R10-5），不作为状态来源。
+   `json loop` 块里（含 `state`/`lease_until`/`heartbeat_at`/`attempt`/`model`）。
+   - 最终态（W2+）：权威状态在 `loop-state` orphan 分支，GitHub Issue 是投影镜像。
+   - `cards/` 本地目录已于 2026-07-30 冻结为只读归档（R10-5），不作为状态来源。
 2. **V 卡自动 ready 扫描（硬步骤，不许跳）**：若该 V 卡 `state:ready=false` 但 `status:pending`，
    且 `verify_target` 指向的 C 卡 `status:done`，则通过 loopd 置该 V 卡 `state:ready=true`。
    这不是"造卡"，是状态机推进。每个会话开头都必须跑一遍这个扫描，否则验证环永远转不起来。
