@@ -76,16 +76,20 @@ def run_audit_shards():
             r = subprocess.run(['git', 'diff', '--name-only', last_sha, 'HEAD'],
                                capture_output=True, text=True, cwd=str(LOOP))
             if r.returncode != 0:
-                # 非 0 退出：记录 stderr 便于排障，diff_paths 按空处理（best-effort 降级，
-                # 不中断整轮审计——单个 shard diff 失败不应阻塞其他 shard 的 lens 执行）。
+                # 非 0 退出：记录 stderr 便于排障。Copilot round-6 review：diff 失败
+                # 若仅静默降级为空会让该 shard 审计输入变"无变更"，可能误漏 finding 而
+                # workflow 仍 exit 0（假绿）。故把 diff 失败计入失败集合，最终让 main()
+                # exit 1；同时 diff_paths 按空继续跑该 shard 的 lens（输出更多诊断信息）。
                 print(f'shard {sid}: git diff {last_sha}..HEAD exited {r.returncode}: '
                       f'{(r.stderr or "").strip()}', file=sys.stderr)
                 diff_paths = []
+                LENS_FAILURES.append((sid, '__git_diff__'))
             else:
                 diff_paths = [x for x in r.stdout.splitlines() if x.strip()]
         except Exception as e:
             diff_paths = []
             print(f'shard {sid}: diff failed {e}')
+            LENS_FAILURES.append((sid, '__git_diff__'))
         for lens in sh.get('lenses', []):
             script_sh = LOOP / 'lenses' / f'{lens}.sh'
             if not script_sh.exists():
@@ -207,13 +211,13 @@ def run_audit_shards():
 
 
 def main():
-    """audit.yml Step 2 入口：跑分片 → 缺脚本则 exit 1（R14-1，不静默跳过）。"""
+    """audit.yml Step 2 入口：跑分片 → 缺脚本/diff 失败则 exit 1（R14-1，不静默跳过）。"""
     _runs, _new, lens_failures = run_audit_shards()
-    # R14-1：缺脚本即红——循环结束后若有 lens 失败则整体 exit 1（不静默跳过）。
-    # 标签 LENS_FAILURES 涵盖"缺脚本"与"脚本非0退出"两类（Copilot review 建议，
-    # 原 LENS_NOT_EXECUTED 标签只描述了缺脚本，会误报执行失败为未执行）。
+    # R14-1：缺脚本即红——循环结束后若有 lens/diff 失败则整体 exit 1（不静默跳过）。
+    # 失败集合涵盖"缺脚本"、"脚本非0退出"、"git diff 失败"三类（Copilot round-6：
+    # diff 失败也计入，避免审计输入静默降级为空而 workflow 仍 exit 0 的假绿风险）。
     if lens_failures:
-        print(f'LENS_FAILURES ({len(lens_failures)}): {lens_failures}')
+        print(f'SHARD_FAILURES ({len(lens_failures)}): {lens_failures}')
         sys.exit(1)
 
 

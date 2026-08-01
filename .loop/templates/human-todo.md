@@ -1,6 +1,6 @@
 # HUMAN-TODO —— 每日四问（tick 自动生成）
 
-> 本文件由 `python3 conductor/tick.py --generate-digest` 每日生成。
+> 本文件由 `python3 conductor/tick.py --generate-digest` 生成（建议每日运行；当前无 cron 自动触发，需人工或后续 workflow 接入）。
 > 只列**AI 无法代做**的事项与系统真实现状。人工维护的长期清单见根目录 `HUMAN-TODO.md`。
 > 生成时间：{{generated_at}}
 

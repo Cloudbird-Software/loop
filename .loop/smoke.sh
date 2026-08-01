@@ -702,7 +702,8 @@ STAGE_K_OUT=$(python3 - <<'PY'
 import sys
 try:
     import yaml
-    d = yaml.safe_load(open('products.yml'))
+    with open('products.yml') as f:
+        d = yaml.safe_load(f)
 except Exception as e:
     print('FAIL products.yml unparseable: %s' % e); print('STAGE_K_FAIL'); sys.exit(0)
 prods = d.get('products') if isinstance(d, dict) else None
