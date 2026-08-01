@@ -26,8 +26,8 @@
 | `schema` | 是 | 固定 `1` |
 | `id` | 是 | 形如 `R10-1`，全局唯一 |
 | `objective` | 是 | 短目标，进 issue 标题 |
-| `title` | 是 | 完整标题 |
-| `repo` | 是 | `loop` 或 `product-x`，标明**目标仓库** |
+| `title` | 否 | 完整标题；缺省时用 `objective` 派生 |
+| `repo` | 否 | `loop` 或 `product-x`，标明**目标仓库**；缺省默认为 `loop`（仅跨仓卡需显式声明） |
 | `tier` | 是 | `trivial` / `standard` / `critical`；命中敏感路径会被 `auto_tier` 强制提升为 `critical` |
 | `role` | 是 | `impl` / `verify` / `planner` / … |
 | `charter` | 是 | 只能引用 `CHARTER.md` 末尾"机器可读索引"里出现的编号 |
