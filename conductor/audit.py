@@ -69,10 +69,20 @@ def run_audit_shards():
         sid = sh['id']
         last_sha = sh.get('last_audited_sha', 'HEAD~1')
         # 取 diff 路径（简化版；实际用 git diff --name-only last_sha..HEAD）
+        # Copilot round-5 review：检查 returncode——last_sha 不存在/仓库异常时
+        # subprocess.run 不抛异常但返回非 0，若不检查会把 diff_paths 静默降级为空，
+        # 导致该 shard 实际有变更但审计输入为空（误漏 finding，N11 假绿风险）。
         try:
             r = subprocess.run(['git', 'diff', '--name-only', last_sha, 'HEAD'],
                                capture_output=True, text=True, cwd=str(LOOP))
-            diff_paths = [x for x in r.stdout.splitlines() if x.strip()]
+            if r.returncode != 0:
+                # 非 0 退出：记录 stderr 便于排障，diff_paths 按空处理（best-effort 降级，
+                # 不中断整轮审计——单个 shard diff 失败不应阻塞其他 shard 的 lens 执行）。
+                print(f'shard {sid}: git diff {last_sha}..HEAD exited {r.returncode}: '
+                      f'{(r.stderr or "").strip()}', file=sys.stderr)
+                diff_paths = []
+            else:
+                diff_paths = [x for x in r.stdout.splitlines() if x.strip()]
         except Exception as e:
             diff_paths = []
             print(f'shard {sid}: diff failed {e}')

@@ -1,7 +1,8 @@
 # .loop/liveness.yml — cron 期望周期登记（W0-2）
 # 每个 workflow 的期望运行间隔；超期由 tick/drift 检测开 Incident。
 # 消费方：conductor/tick.py liveness_check + W0-5 digest。
-# 顶层 ticks 键为权威契约（W0-5 AC-3: assert 'ticks' in d）。
+# 顶层 ticks 键为权威契约（W0-5 AC-3 验证 ticks 可读；tick.py 用 d.get('ticks', [])
+# 容错读取——文件缺失/键缺失返回 []，不抛异常，与 digest best-effort 风格一致）。
 # name 必须是 .github/workflows/<name>.yml 的基名（tick.py line 917 用 f"{name}.yml" 查询）。
 # 采纳 Copilot PR review 建议：tick → conductor（实际 workflow 文件是 conductor.yml，
 # 原 name: tick 会查 tick.yml 导致 digest 永久误报 "liveness 无 run: tick"）。
