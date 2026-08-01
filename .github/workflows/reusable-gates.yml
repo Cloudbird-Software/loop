@@ -39,6 +39,12 @@ on:
       GH_TOKEN:
         description: "调用方仓的 GitHub token（gate 读 PR/评论所需；传值时传入 secrets.GITHUB_TOKEN）"
         required: true
+      CONDUCTOR_APP_ID:
+        description: "App ID for create-github-app-token"
+        required: true
+      CONDUCTOR_APP_KEY:
+        description: "App private key for create-github-app-token"
+        required: true
 
 permissions:
   contents: read

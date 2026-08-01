@@ -55,6 +55,12 @@ on:
       COPILOT_GITHUB_TOKEN:
         description: "Copilot CLI 鉴权 token（未配置时显式跳过评审，非失败）"
         required: false
+      CONDUCTOR_APP_ID:
+        description: "App ID for create-github-app-token"
+        required: true
+      CONDUCTOR_APP_KEY:
+        description: "App private key for create-github-app-token"
+        required: true
 
 permissions:
   contents: read
