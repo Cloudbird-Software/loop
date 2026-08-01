@@ -43,10 +43,11 @@ jobs:
           set -euo pipefail
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
           echo "PR source branch: $BRANCH"
-          # 支持分支命名：agent/<card_id>/e<N> | loop/card/<card_id> | agent/card/<card_id>
-          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/e[0-9]+)?$#\3#p')
+          # 支持分支命名：agent/<card_id>[/suffix] | loop/card/<card_id> | agent/card/<card_id>
+          # suffix 可选（epoch、uuid、或其他），正则匹配两个路径段后取第二段为 CARD_ID。
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/.*)?$#\3#p')
           if [[ -z "$CARD_ID" ]]; then
-            echo "FAIL: no card branch — '$BRANCH' does not match ^(agent|loop)/(card/)?<card_id>(/e[0-9]+)?$"
+            echo "FAIL: no card branch — '$BRANCH' does not match ^(agent|loop)/(card/)?<card_id>[/suffix]$"
             echo "Only loopd-created branches are allowed to create PRs on this repo."
             echo "card_id=" >> "$GITHUB_OUTPUT"
             exit 1
@@ -120,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
-          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/e[0-9]+)?$#\3#p')
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/.*)?$#\3#p')
           if [[ -z "$CARD_ID" ]]; then
             echo "card_id=" >> "$GITHUB_OUTPUT"
             echo "no card branch — CARD_ID is empty"
