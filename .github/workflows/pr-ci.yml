@@ -25,6 +25,144 @@ concurrency:
 
 jobs:
   # ============================================================
+  # card-lease —— PR 必须关联一张已领卡的分支。
+  # 强制屏障：AI 直接用 gh/git 绕过 loopd 领卡/完成时，此检查会红。
+  # 不修改 loopd/（提议约束：loopd 内部不加屏障）。
+  # 逻辑：从 PR 源分支提取 CARD_ID → 在 origin/main 的 waves/*.md 中
+  # 查该卡 → state 必须 claimed/in_progress/in_review/done。
+  # ============================================================
+  card-lease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # 需要 fetch-depth 以访问 origin/main
+      - name: 提取 CARD_ID 并校验分支命名
+        id: extract
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          echo "PR source branch: $BRANCH"
+          # 支持分支命名：agent/<card_id>/e<N> | loop/card/<card_id> | agent/card/<card_id>
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/e[0-9]+)?$#\3#p')
+          if [[ -z "$CARD_ID" ]]; then
+            echo "FAIL: no card branch — '$BRANCH' does not match ^(agent|loop)/(card/)?<card_id>(/e[0-9]+)?$"
+            echo "Only loopd-created branches are allowed to create PRs on this repo."
+            echo "card_id=" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "card_id=$CARD_ID" >> "$GITHUB_OUTPUT"
+          echo "Extracted CARD_ID=$CARD_ID from branch '$BRANCH'"
+
+      - name: 从 origin/main 查卡 state
+        run: |
+          set -euo pipefail
+          CARD_ID="${{ steps.extract.outputs.card_id }}"
+          echo "Checking card '$CARD_ID' on origin/main..."
+          python - <<'PY'
+          import re, json, sys, subprocess, os
+
+          card_id = sys.argv[1]
+          all_blocks = []
+
+          # 列出 origin/main 上的所有 waves/*.md
+          result = subprocess.run(
+              ['git', 'ls-tree', '-r', '--name-only', 'origin/main', 'waves/'],
+              capture_output=True, text=True
+          )
+          wave_files = [f for f in sorted(result.stdout.splitlines()) if f.endswith('.md')]
+
+          for wave_file in wave_files:
+              r = subprocess.run(
+                  ['git', 'show', f'origin/main:{wave_file}'],
+                  capture_output=True, text=True
+              )
+              if r.returncode != 0:
+                  continue
+              all_blocks.extend(re.findall(r'```json loop\n(.*?)\n```', r.stdout, re.DOTALL))
+
+          target = None
+          for block in all_blocks:
+              try:
+                  data = json.loads(block)
+                  if data.get('id') == card_id:
+                      target = data
+                      break
+              except json.JSONDecodeError:
+                  pass
+
+          if not target:
+              print(f"FAIL: card '{card_id}' not found in any waves/*.md on main")
+              sys.exit(1)
+
+          state = target.get('state', '')
+          allowed = {'claimed', 'in_progress', 'in_review', 'done'}
+          if state not in allowed:
+              print(f"FAIL: card '{card_id}' state is '{state}', must be one of {sorted(allowed)}")
+              sys.exit(1)
+          print(f"OK: card '{card_id}' state='{state}' — lease verified on main")
+          PY
+        env:
+          CARD_ID: ${{ steps.extract.outputs.card_id }}
+
+  # ============================================================
+  # card-lease-extract — 提取 CARD_ID 供后续 job 复用（verify 等）。
+  # 单独 job 以便复用输出。
+  # ============================================================
+  card-lease-extract:
+    runs-on: ubuntu-latest
+    outputs:
+      card_id: ${{ steps.extract.outputs.card_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Extract CARD_ID
+        id: extract
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          CARD_ID=$(echo "$BRANCH" | sed -nE 's#^(agent|loop)/(card/)?([^/]+)(/e[0-9]+)?$#\3#p')
+          if [[ -z "$CARD_ID" ]]; then
+            echo "card_id=" >> "$GITHUB_OUTPUT"
+            echo "no card branch — CARD_ID is empty"
+          else
+            echo "card_id=$CARD_ID" >> "$GITHUB_OUTPUT"
+            echo "CARD_ID=$CARD_ID"
+          fi
+
+  # ============================================================
+  # verify —— 卡片自身的验收脚本（.loop/verify.sh）。
+  # 若卡片声明了 verify.sh（卡 paths 包含 .loop/verify.sh，或文件存在），
+  # 则必须通过；不存在则 skip（非所有卡都需要 verify）。
+  # ============================================================
+  verify:
+    runs-on: ubuntu-latest
+    needs: [card-lease-extract]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Setup Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip PyYAML
+      - name: Run card verify
+        run: |
+          set -euo pipefail
+          CARD_ID="${{ needs.card-lease-extract.outputs.card_id }}"
+          if [[ -z "$CARD_ID" ]]; then
+            echo "SKIP: no card branch — cannot identify card for verify"
+            exit 0
+          fi
+          if [[ -f .loop/verify.sh ]]; then
+            echo "Running .loop/verify.sh for card $CARD_ID..."
+            bash .loop/verify.sh
+          else
+            echo "SKIP: .loop/verify.sh not present — card $CARD_ID has no declared verify script"
+          fi
+
+  # ============================================================
   # test —— 单元测试。这是 required check 的最小集之一。
   # ============================================================
   test:
