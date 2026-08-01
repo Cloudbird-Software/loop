@@ -18,6 +18,12 @@ p = subprocess.run(["bash", SMOKE], cwd=REPO_ROOT)
 if p.returncode == 0:
     print("OK: smoke.sh passed")
     sys.exit(0)
-# 非 0 退出码原样向上冒泡：1=显式失败，>1=脚本崩溃/用法错误（保留分类信号）。
-print(f"FAIL: smoke.sh exited {p.returncode}")
+# 非 0 退出码原样向上冒泡并区分语义（Copilot review 建议）：
+#   returncode==1 → FAIL（smoke 显式断言失败）
+#   returncode>1  → ERROR（脚本崩溃/用法错误/信号终止）
+# 两者都保留原始退出码向上冒泡，让 run_gates 能据 exit code 分类排障。
+if p.returncode == 1:
+    print(f"FAIL: smoke.sh exited {p.returncode}")
+else:
+    print(f"ERROR: smoke.sh exited {p.returncode} (crash/usage error)")
 sys.exit(p.returncode)

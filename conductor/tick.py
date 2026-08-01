@@ -850,14 +850,14 @@ def _load_liveness_config():
 def _gather_blocked_on_human():
     """卡在我这的：查 needs-human 标签的 open issue + 根 HUMAN-TODO.md 未勾选条目。"""
     items = []
-    p = gh("issue","list","-R",REPO,"--label","needs-human","--state","open",
-           "--limit","30","--json","number,title")
+    # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致，
+    # 避免 needs-human 查询失败中断整个 digest（CodeQL：非空 except）。
     try:
+        p = gh("issue","list","-R",REPO,"--label","needs-human","--state","open",
+               "--limit","30","--json","number,title")
         for it in json.loads(p.stdout or "[]"):
             items.append(f"- [ ] #{it['number']} {it['title']}")
     except Exception as e:
-        # best-effort 采集：gh 调用失败或 JSON 解析异常时降级为空列表，
-        # 不中断 digest 生成（CodeQL：非空 except）。
         print(f"[warn] _gather_blocked_on_human: {e}", file=sys.stderr)
     if not items:
         items.append("- （当前无 needs-human 标签的 open issue）")
@@ -879,11 +879,14 @@ def _gather_released_yesterday():
     """昨天放行的：最近 24h 合并的 PR。"""
     since = (datetime.datetime.now(datetime.timezone.utc) -
              datetime.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    p = gh("pr","list","-R",REPO,"--state","merged","--limit","50",
-           "--search",f"merged:>{since}","--json","number,title,mergedAt,author")
+    # best-effort 采集：gh 调用本身可能抛异常（网络/权限），包一层 try 与其他
+    # _gather_* 保持一致容错风格，避免单点失败中断整个 digest 渲染。
     try:
+        p = gh("pr","list","-R",REPO,"--state","merged","--limit","50",
+               "--search",f"merged:>{since}","--json","number,title,mergedAt,author")
         prs = json.loads(p.stdout or "[]")
-    except Exception:
+    except Exception as e:
+        print(f"[warn] _gather_released_yesterday: {e}", file=sys.stderr)
         prs = []
     if not prs:
         return "- （最近 24h 无合并 PR）"
@@ -897,11 +900,14 @@ def _gather_degradations():
     items = []
     # 1. 控制面 workflow 最近 3 次 run 中的 failure（--limit 3，与下方一致）
     for wf in ("conductor.yml", "audit.yml", "canary.yml", "scribe.yml", "drift.yml"):
-        p = gh("run","list","-R",CONTROL_REPO,"--workflow",wf,"--limit","3",
-               "--json","conclusion,createdAt,displayTitle")
+        # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致，
+        # 避免单个 workflow 查询失败中断整个 digest（CodeQL：非空 except）。
         try:
+            p = gh("run","list","-R",CONTROL_REPO,"--workflow",wf,"--limit","3",
+                   "--json","conclusion,createdAt,displayTitle")
             runs = json.loads(p.stdout or "[]")
-        except Exception:
+        except Exception as e:
+            print(f"[warn] degradations {wf}: {e}", file=sys.stderr)
             runs = []
         fails = [r for r in runs if r.get("conclusion") == "failure"]
         if fails:
@@ -914,9 +920,10 @@ def _gather_degradations():
             name = t.get("name","")
             expect = t.get("expect_hours", 0)
             if not name or expect <= 0: continue
-            p = gh("run","list","-R",CONTROL_REPO,"--workflow",f"{name}.yml",
-                   "--limit","1","--json","createdAt,conclusion")
+            # best-effort 采集：gh 调用本身可能抛异常，包一层 try 与其他 _gather_* 一致。
             try:
+                p = gh("run","list","-R",CONTROL_REPO,"--workflow",f"{name}.yml",
+                       "--limit","1","--json","createdAt,conclusion")
                 runs = json.loads(p.stdout or "[]")
                 if runs:
                     created = _parse_utc_iso(runs[0]["createdAt"])
@@ -930,9 +937,9 @@ def _gather_degradations():
                 # 跳过该项继续下一个（CodeQL：非空 except）。
                 print(f"[warn] liveness {name}: {e}", file=sys.stderr)
     # 3. open Incident
-    p = gh("issue","list","-R",REPO,"--label","incident","--state","open",
-           "--limit","10","--json","number,title,createdAt")
     try:
+        p = gh("issue","list","-R",REPO,"--label","incident","--state","open",
+               "--limit","10","--json","number,title,createdAt")
         incs = json.loads(p.stdout or "[]")
         for inc in incs:
             items.append(f"- **Incident #{inc['number']}**: {inc['title']} ({inc.get('createdAt','?')})")

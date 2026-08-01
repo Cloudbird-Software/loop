@@ -15,8 +15,9 @@ sys.path 修复（W0-3 根因修复）。
   - 新 finding → create_finding 开 GitHub issue（或复用已 open 的）
   - 写 .loop/audit/run_summary.json + new_findings.json
   - 缺脚本的 lens 不静默跳过（R14-1）：循环结束 exit 1
+  - lens 脚本非 0 退出同样计入失败（N11 不静默吞错）：循环结束 exit 1
 
-退出码：缺脚本 lens → exit 1（不静默跳过）；否则 exit 0。
+退出码：缺脚本 lens 或 lens 非 0 退出 → exit 1（不静默跳过）；否则 exit 0。
 """
 import json, pathlib, subprocess, datetime, tempfile, sys
 
@@ -87,13 +88,15 @@ def run_audit_shards():
             # 采纳 Copilot 建议：检查 returncode 区分"lens 显式失败(非0退出)"与
             # "脚本崩溃/异常"；前者记入 LENS_FAILURES 以便循环结束后整体红，避免
             # 静默吞错（N11）。保持原 12 空格缩进，修复 c84ec7d 的 IndentationError。
+            # 标签用 LENS_FAILED（而非 LENS_NOT_EXECUTED）：脚本已被执行只是失败退出，
+            # "NOT_EXECUTED" 会误导定位（Copilot review 建议）。
             try:
                 p = subprocess.run(
                     ['bash', str(script_sh), ev_in, ev_out],
                     capture_output=True, text=True, timeout=300,
                     cwd=str(LOOP))
                 if p.returncode != 0:
-                    msg = (p.stderr or p.stdout or f"LENS_NOT_EXECUTED: {lens} (exit {p.returncode})").strip()
+                    msg = (p.stderr or p.stdout or f"LENS_FAILED: {lens} (exit {p.returncode})").strip()
                     print(msg, file=sys.stderr)
                     LENS_FAILURES.append((sid, lens))
                     results = []
@@ -103,7 +106,7 @@ def run_audit_shards():
                     except Exception as e:
                         results = []
             except Exception as e:
-                print(f"LENS_NOT_EXECUTED: {lens} ({e})", file=sys.stderr)
+                print(f"LENS_FAILED: {lens} ({e})", file=sys.stderr)
                 LENS_FAILURES.append((sid, lens))
                 results = []
             # fingerprint 去重 + 配额控制
@@ -185,9 +188,11 @@ def run_audit_shards():
 def main():
     """audit.yml Step 2 入口：跑分片 → 缺脚本则 exit 1（R14-1，不静默跳过）。"""
     _runs, _new, lens_failures = run_audit_shards()
-    # R14-1：缺脚本即红——循环结束后若有 lens 失败则整体 exit 1（不静默跳过）
+    # R14-1：缺脚本即红——循环结束后若有 lens 失败则整体 exit 1（不静默跳过）。
+    # 标签 LENS_FAILURES 涵盖"缺脚本"与"脚本非0退出"两类（Copilot review 建议，
+    # 原 LENS_NOT_EXECUTED 标签只描述了缺脚本，会误报执行失败为未执行）。
     if lens_failures:
-        print(f'LENS_NOT_EXECUTED failures ({len(lens_failures)}): {lens_failures}')
+        print(f'LENS_FAILURES ({len(lens_failures)}): {lens_failures}')
         sys.exit(1)
 
 
