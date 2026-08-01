@@ -9,7 +9,7 @@
 - [x] `WAVE_FROZEN=true`
 - [x] 基线 HEAD：`54e0ef0`（2026-08-01 00:09 UTC）
 - [x] 标签就位：needs-human / evidence-fraud / placebo-gate / rhg-watch / state-tamper / metric-incident
-- [x] `waves/WAVE-00/evidence/` 目录就位
+- [ ] `waves/WAVE-00/evidence/` 目录就位（由 W0-3 创建）
 - [x] 根 CODEOWNERS 就位（机制路径 → @randypanding）
 
 ## 卡包发放表（W0）
