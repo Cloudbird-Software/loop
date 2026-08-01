@@ -46,10 +46,20 @@ if [ -n "$SCAN_OUTPUT" ]; then
     lineno="${rest%%:*}"
     match="${rest#*:}"
     path="${path#./}"
+    # Copilot review：findings 不得回显完整 token（会把凭据写进 CI 日志/制品，
+    # 扩大暴露面）。仅保留前缀 + 长度，足以定位与排障又不泄露凭据本体。
+    prefix="${match%%_*}_"
+    redacted="${prefix}***[${#match}chars]"
+    # JSON-escape path（防止文件名含 " / \ 等字符产出非法 JSON）。
+    # 顺序：先反斜杠，再引号，再换行/制表（标准 JSON escape）。
+    esc_path="${path//\\/\\\\}"
+    esc_path="${esc_path//\"/\\\"}"
+    esc_path="${esc_path//$'\n'/\\n}"
+    esc_path="${esc_path//$'\t'/\\t}"
     if [ "$count" -gt 0 ]; then
       findings_json+=","
     fi
-    findings_json+="{\"path\":\"$path\",\"line\":$lineno,\"match\":\"$match\"}"
+    findings_json+="{\"path\":\"$esc_path\",\"line\":$lineno,\"match\":\"$redacted\"}"
     count=$((count+1))
   done <<< "$SCAN_OUTPUT"
 fi

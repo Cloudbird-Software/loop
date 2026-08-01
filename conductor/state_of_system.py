@@ -132,19 +132,31 @@ def _resolve_query_repo():
 
 
 def _count_open_issues(repo):
-    """best-effort 统计 open issue 数；失败返回 'unknown'。"""
+    """best-effort 统计 open issue 数；失败返回 'unknown'。
+
+    Copilot review：原 --limit 200 在 issue 数 >200 时会静默截断但仍报告一个
+    看似精确的数字，与脚本「真实状态」意图相悖。改为：命中 limit 时报告
+    「>=N (capped lower-bound)」而非精确值，诚实标注下界。
+    """
     if not repo:
         return "unknown (no repo resolved)"
+    LIMIT = 1000
     try:
         p = subprocess.run(
             ["gh", "issue", "list", "-R", repo, "--state", "open",
-             "--limit", "200", "--json", "number"],
+             "--limit", str(LIMIT), "--json", "number"],
             capture_output=True, text=True, timeout=30,
         )
         if p.returncode != 0:
             return "unknown (gh issue list failed)"
         items = json.loads(p.stdout or "[]")
-        return len(items) if isinstance(items, list) else "unknown (bad json)"
+        if not isinstance(items, list):
+            return "unknown (bad json)"
+        n = len(items)
+        # 命中 limit：真实数 >= LIMIT，报告下界而非精确值（不假绿）。
+        if n >= LIMIT:
+            return f">={LIMIT} (capped lower-bound)"
+        return n
     except Exception:
         return "unknown (gh unavailable)"
 

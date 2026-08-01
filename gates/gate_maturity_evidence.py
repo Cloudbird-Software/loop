@@ -59,12 +59,23 @@ def check_evidence():
     """检查是否存在 run 证据。返回 (has_evidence, detail)。
 
     has_evidence=True → PASS（exit 0）；False → NO_RUN_EVIDENCE → FAIL（exit 1）。
+
+    Copilot review：原 detail 在 EVIDENCE_FILE 已设但文件缺失/空时仍说
+    "no EVIDENCE_FILE env"，误导排障。现按实际条件区分措辞。
     """
     if _has_env_run_id():
         rid = os.environ.get("EVIDENCE_RUN_ID", "").strip()
         return True, f"evidence: EVIDENCE_RUN_ID={rid}"
     if _has_marker_file():
         return True, f"evidence: marker file {_evidence_file_path()}"
+    # 无证据：按实际条件描述，便于排障（Copilot review）
+    env_file = os.environ.get("EVIDENCE_FILE", "").strip()
+    if env_file:
+        # EVIDENCE_FILE 已设但文件不存在/为空
+        return False, (
+            "no run evidence found (no EVIDENCE_RUN_ID env; "
+            f"EVIDENCE_FILE={env_file!r} set but file missing/empty)"
+        )
     return False, (
         "no run evidence found (no EVIDENCE_RUN_ID env, "
         "no EVIDENCE_FILE env, no default marker at "
