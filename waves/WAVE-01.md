@@ -91,8 +91,8 @@
   "acceptance": [
     "AC-1: python3 loopd/loopd.py help 的 stdout 可被 json.tool 解析且含 16 个已知动词",
     "AC-2: python3 loopd/loopd.py nonexistent-verb 退出码=64 且 JSON 含 UNKNOWN_VERB",
-    "AC-3: grep -E '_emit|UNKNOWN_VERB *= *64' loopd/loopd.py 命中（代码级）",
-    "AC-4: 盲一半：不读 W1-1 过程评论，只据上述命令输出判 PASS/FAIL，VERDICT 附命令原文",
+    "AC-3: python3 loopd/loopd.py unknown-noop 退出码≠0（拒绝未知动词不 fail-open），stdout 可被 json.tool 解析",
+    "AC-4: 盲一半：只读 W1-1 的 .loop/schemas/verdict.json schema 与命令输出，不读 W1-1 过程评论与 loopd/** 源码，据命令输出判 PASS/FAIL，VERDICT 附命令原文",
     "AC-5: VERDICT 写为 .loop/schemas/verdict.json，含 card_id=W1-1 + 证据清单"
   ],
   "blocked_by": ["W1-1"],
@@ -139,7 +139,8 @@
     "AC-1: pytest tests/test_cli_contract.py -q 全绿且用例数 ≥ 32",
     "AC-2: 所有用例通过 subprocess 调用 loopd/loopd.py，而非 import",
     "AC-3: python3 tests/test_cli_meta.py EXIT=0",
-    "AC-4: 元测试断言 test_cli_contract.py 未直接 import loopd 内部模块"
+    "AC-4: 元测试断言 test_cli_contract.py 未直接 import loopd 内部模块",
+    "AC-5（负证）: 向 test_cli_contract.py 注入一行 from loopd import loopd 后，python3 tests/test_cli_meta.py 必须 EXIT≠0（元测试拦截 import 违例）"
   ],
   "blocked_by": ["W1-1"],
   "budget": 0.8,
@@ -199,7 +200,8 @@
     "AC-1: grep -ohE 'loopd [a-z-]+' prompts/*.md | sort -u 结果全部存在于 loopd HANDLERS 中",
     "AC-2: python3 gates/gate_doc_drift.py EXIT=0",
     "AC-3: gate_doc_drift.py 实现三方比对（prompts ↔ HANDLERS ↔ argparse）",
-    "AC-4: prompts 中不存在 loopd claim / loopd reaper 等不存在的动词"
+    "AC-4: prompts 中不存在 loopd claim / loopd reaper 等不存在的动词",
+    "AC-5（负证）: 向任一 prompts/*.md 注入一行「loopd reaper」后，python3 gates/gate_doc_drift.py 必须 EXIT≠0（漂移门拦截不存在动词）"
   ],
   "blocked_by": ["W1-1"],
   "budget": 0.8,
@@ -220,7 +222,8 @@
   "schema": 1,
   "id": "W1-4",
   "wave": "WAVE-01",
-  "objective": "gate 注入消除：policy.yml search_dirs 仅留 ${LOOP_ROOT}/gates + run_gates 启动断言",
+  "objective": "gate 注入消除：policy.yml search_dirs 仅留 ${LOOP_ROOT}/gates + run_gates 启动断言；search_dirs 收敛已按操作手册 §5 定稿授权（impl 不得触碰 gates.profiles 集合与 review.required_check）",
+  "human_action": "本卡对 policy.yml 仅允许收敛 gates.search_dirs；gates.profiles（gate 集合）与 review.* 段不属于本卡路径，任何扩大修改需先经人类裁决",
   "tier": "standard",
   "role": "impl",
   "paths": [
@@ -390,7 +393,7 @@
   "id": "W1-7",
   "wave": "WAVE-01",
   "objective": "立法机制：.loop/exceptions.yml + gate_ratchet.py（棘轮）；N16-N32 立法交由人类（impl 不改 CHARTER.md）",
-    "human_action": "人类在 CHARTER 'Never Doing（N 段）' 章节按需新增并同步登记机器可读索引 N16-N32；impl 仅搭棘轮/exceptions 落地机制",
+  "human_action": "人类在 CHARTER 'Never Doing（N 段）' 章节按需新增并同步登记机器可读索引 N16-N32；impl 仅搭棘轮/exceptions 落地机制",
   "tier": "standard",
   "role": "impl",
   "paths": [
@@ -419,7 +422,7 @@
   ],
   "charter": ["G3", "G4"],
   "acceptance": [
-    "AC-1（负证）: 注入一个较历史更宽松的 gate 配置，gate_ratchet.py 必须 FAIL（棘轮倒转被拦）",
+    "AC-1（负证）: 复制当前 policy.yml gates 段为临时变体，将其 default profile 缩减一个 gate（变得更宽松），对该变体运行 gate_ratchet.py 必须 FAIL（棘轮倒转被拦）",
     "AC-2: .loop/exceptions.yml 存在且包含空列表",
     "AC-3: gates/gate_ratchet.py 存在且检测配置变宽松（棘轮倒转）",
     "AC-4: gate_ratchet.py 允许配置变严格（棘轮正转）"
