@@ -73,10 +73,6 @@ PR_URL=$(gh pr create -R "$ORG/$PRODUCT" --head "$BRANCH" --base main \
 PR_NUM=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 log "  -> PR #$PR_NUM ($PR_URL)"
 
-# done 卡体（合并成功 或 被"需 approving review"拦截后清理 两条路径共用）
-DONE_BODY='```json loop
-{"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
-```'
 # 5. done（入 merge queue → 合并 PR → 置卡 state=done → 关 issue）
 log "step5: enqueue merge queue + done"
 # product-x 的 main 启用了 merge queue，gh pr merge / --admin 均被拒（"Changes must be made through the merge queue"）。
@@ -142,11 +138,27 @@ if [ "$MERGED_OK" -ne 1 ]; then
   REVIEW_DECISION=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json reviewDecision --jq '.reviewDecision' 2>/dev/null || echo "")
   if [ "$REVIEW_DECISION" = "REVIEW_REQUIRED" ]; then
     log "  -> GATE: PR #$PR_NUM blocked by required approving review (reviewDecision=$REVIEW_DECISION); chain alive, cleaning up"
+    # 被拦截路径：PR 是被 close 而非 merged，卡体用 closed_pr 记录，避免 merged_pr 字段误导。
+    BLOCK_DONE_BODY='```json loop
+{"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"closed_pr":'"$PR_NUM"'}
+```'
+    # 清理必须真正生效，否则合成 PR/分支/卡每日堆积，违背卫生目标；且须与合并路径的 issue 清理保持一致的严格度。
+    # 任一清理步骤失败 → 日志留痕 + CLEANUP_FAIL 置位 → 最终 exit 1（走 canary 的 Incident 通道）暴露，不静默吞掉。
+    CLEANUP_FAIL=0
     gh pr close "$PR_NUM" -R "$ORG/$PRODUCT" \
-      --comment "canary $CARD_ID: blocked by required approving review (expected gate); chain alive. Cleaning up synthetic PR." >/dev/null 2>&1 || true
-    git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
-    gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null 2>&1 || true
-    gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason not_planned >/dev/null 2>&1 || true
+      --comment "canary $CARD_ID: blocked by required approving review (expected gate); chain alive. Cleaning up synthetic PR." >/dev/null 2>&1 \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: close PR #$PR_NUM"; }
+    git push origin --delete "$BRANCH" >/dev/null 2>&1 \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: delete branch $BRANCH"; }
+    gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$BLOCK_DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null 2>&1 \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: update issue #$NUM"; }
+    gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason not_planned >/dev/null 2>&1 \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: close issue #$NUM"; }
+    if [ "$CLEANUP_FAIL" -ne 0 ]; then
+      log "  -> CLEANUP FAILED: chain alive but synthetic PR/branch/issue may remain"
+      echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (cleanup failed)" >&2
+      exit 1
+    fi
     log "  -> done, synthetic PR closed + branch deleted + issue closed"
     echo "CANARY_CHAIN_OK issue=#$NUM pr=#$PR_NUM card=$CARD_ID (blocked by required approving review; cleaned up)"
     exit 0
@@ -158,7 +170,10 @@ fi
 log "  -> PR #$PR_NUM merged"
 # 清理 canary 分支（合并后）
 git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
-gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null
+MERGE_DONE_BODY='```json loop
+{"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
+```'
+gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$MERGE_DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null
 gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason completed >/dev/null
 log "  -> done, issue closed"
 
