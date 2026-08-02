@@ -252,9 +252,14 @@ def check_verdict_evidence(verdict, impl_identity, models_map=None):
     verifier_model = verdict.get("verifier_model") or verdict.get("model")
     session_id = verdict.get("session_id") or verdict.get("blind_phase_commit")
     impl_session = verdict.get("impl_session_id")
-    impl_model = (impl_identity or {}).get("model")
-    impl_family = (impl_identity or {}).get("family")
-    impl_vendor = (impl_identity or {}).get("vendor")
+    # impl_identity 既可以是租约 dict（{model,family,vendor}），也可以是裸 model 字符串
+    if isinstance(impl_identity, str):
+        impl_model, impl_family, impl_vendor = impl_identity, None, None
+    else:
+        impl_id = impl_identity or {}
+        impl_model = impl_id.get("model")
+        impl_family = impl_id.get("family")
+        impl_vendor = impl_id.get("vendor")
     models_map = models_map or {}
 
     if verifier_model and impl_model and verifier_model == impl_model:
