@@ -4,6 +4,14 @@
 > **入口条件**：W0 全绿。
 > **波前冻结**：`WAVE_FROZEN=false`（已解）。
 
+> **波次状态：DONE ✅**（2026-08-02 确认）
+> - 9 张 impl 卡（W1-1/W1-2/W1-3/W1-4/W1-5/W1-6/W1-7/W1-8/W1-9）已完成并在 origin/main 合并。
+> - 1 张异构 verify 卡 V1-1 已产出 VERDICT（PASS）。
+> - W1-7 finding 卡 C-W1-7-F1 已修复并合并（PR #225）。
+> - 关闭判定 Q 正证全 EXIT=0 + R 负证全 EXIT≠0（在干净的 origin/main `278932c` 上实测通过）。
+> - 相关 issues 已关闭：#215–#224（卡）、#216（verify）、#233（finding）。
+> - 遗留：canary chain / 26h survival 监控因跨仓 PAT 失效触发 incident（token 运维问题，见处理说明，非 W1 代码缺陷）。
+
 ## 波次摘要
 
 本波次共 **10 张卡**（9 张 impl + 1 张异构 verify），旨在：

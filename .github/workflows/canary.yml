@@ -166,15 +166,21 @@ jobs:
     permissions: {contents: read, issues: write}  # issues:write 仅供本 job 末尾 Incident 步骤开 issue/label
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: t
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.CONDUCTOR_APP_ID }}
+          private-key: ${{ secrets.CONDUCTOR_APP_KEY }}
+          owner: ${{ github.repository_owner }}
       - name: Run canary chain
         env:
-          # LOOP_CANARY_TOKEN 用途（acceptance #3）：跨仓操作 product-x——开 issue/claim/
-          # push 分支/开 PR/入 merge queue/关 issue。GITHUB_TOKEN 作用域仅限 loop 仓，无法
-          # 触达 product-x，故此处必须用可跨仓的 token，不能用 GITHUB_TOKEN 替换。
-          # canary 走 merge queue（GraphQL enqueuePullRequest），不使用 admin merge；
-          # 线上 ruleset 的 bypass_actors 为空，任何 token 都绕不过分支保护。
-          # 真实风险只是"高权限 PAT 存为 repo secret"——按 docs/密钥清单.md 降权/轮换。
-          GH_TOKEN: ${{ secrets.LOOP_CANARY_TOKEN }}
+          # 跨仓操作 product-x——开 issue/claim/push 分支/开 PR/入 merge queue/关 issue。
+          # 原用 LOOP_CANARY_TOKEN (跨仓 PAT)，已失效（HTTP 401: Bad credentials on graphql，
+          # 见 canary chain broken incidents）。改用 Conductor GitHub App 临时 token
+          # （create-github-app-token 现换），权限 = contents:write + issues:write +
+          # pull-requests:write + merge-queue:write，覆盖 chain 全部跨仓写操作，且短期可吊销。
+          # GITHUB_TOKEN 作用域仅限 loop 仓，无法触达 product-x，故仍不可用 GITHUB_TOKEN 替换。
+          GH_TOKEN: ${{ steps.t.outputs.token }}
           LOOP_ORG: ${{ github.repository_owner }}
           LOOP_PRODUCT: ${{ vars.LOOP_PRODUCT }}
           LOOP_HUMAN: ${{ vars.LOOP_HUMAN }}
