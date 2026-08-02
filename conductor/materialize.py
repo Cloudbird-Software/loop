@@ -19,6 +19,15 @@
 """
 import json, os, subprocess, sys, pathlib, fnmatch, re, hashlib, datetime
 
+# 与 conductor/tick.py 相同策略：直接运行 `python conductor/materialize.py` 时
+# sys.path[0] 是 conductor/ 而非仓库根，先插入仓库根使 conductor.* 包可导入。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+# schema 字段名单一事实源（W2-5 / I-001）：租约到期等键名不裸硬编码。
+from conductor.schema_types import CARD_FIELD_LEASE_UNTIL
+
 E = os.environ
 _repo_env = E.get("LOOP_REPO", "loop")
 # Handle both short name ("loop") and full name ("Cloudbird-Software/loop")
@@ -577,7 +586,7 @@ def create_card_issue(card, milestone_num, parent_num, role):
     # Ensure state is ready for dispatch
     card["state"] = "ready"
     card.setdefault("claim_id", None)
-    card.setdefault("lease_until", None)
+    card.setdefault(CARD_FIELD_LEASE_UNTIL, None)
     card.setdefault("heartbeat_at", None)
     card.setdefault("attempt", 0)
     card.setdefault("session_ordinal", None)

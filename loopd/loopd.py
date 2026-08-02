@@ -8,6 +8,18 @@ E 包高强度测试修复：环境变量缺失时 --help/--version 仍能工作
 """
 import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime, sys
 
+# 直接运行 `python loopd/loopd.py` 时 sys.path[0] 是 loopd/ 而非仓库根；
+# 先插入仓库根使 conductor.* 包可导入（与 conductor/tick.py 同一策略）。
+_LOOPD_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _LOOPD_REPO_ROOT not in sys.path:
+    sys.path.insert(0, _LOOPD_REPO_ROOT)
+
+# schema 字段名单一事实源（W2-5 / I-001）：租约到期等键名不裸硬编码。
+from conductor.schema_types import (
+    CARD_FIELD_LEASE_UNTIL,
+    CARD_FIELD_HEARTBEAT_AT,
+)
+
 # ============================================================
 # W1-1：退出码常量 + 统一 JSON 输出口
 # ============================================================
@@ -226,8 +238,9 @@ def h_next(args):
             cid = f"{SID}-{uuid.uuid4().hex[:8]}"
             new = dict(blk, state="claimed", claim_id=cid, model=MODEL,
                        sandbox=SID, session_ordinal=d["session_ordinal"]+1,
-                       lease_until=int(time.time())+int(E.get("LOOP_LEASE_MIN", 30))*60,
-                       heartbeat_at=int(time.time()))
+                       heartbeat_at=int(time.time()),
+                       **{CARD_FIELD_LEASE_UNTIL:
+                          int(time.time())+int(E.get("LOOP_LEASE_MIN", 30))*60})
             if not write_block(it["number"], new, it["updatedAt"]): continue     # 抢卡失败换下一张
             prepare_branch(new["id"])
             (WS/".loop"/"CARD.md").write_text(render_card(it, new))
@@ -800,7 +813,7 @@ def h_status(args):
     c = d.get("card")
     if c:
         lines.append(f"card: #{c['num']} ({c['blk'].get('id','?')}) state={c['blk'].get('state','?')}")
-        lease = c['blk'].get('lease_until',0)
+        lease = c['blk'].get(CARD_FIELD_LEASE_UNTIL, 0)
         lines.append(f"lease: {'EXPIRED' if lease < time.time() else f'{int((lease-time.time())/60)}m left'}")
     else:
         lines.append("card: none")
@@ -905,8 +918,8 @@ def heartbeat_thread():
     while True:
         d = st(); c = d.get("card")
         if c:
-            b = dict(c["blk"]); b["heartbeat_at"] = int(time.time())
-            b["lease_until"] = int(time.time()) + int(E.get("LOOP_LEASE_MIN", 30))*60
+            b = dict(c["blk"]); b[CARD_FIELD_HEARTBEAT_AT] = int(time.time())
+            b[CARD_FIELD_LEASE_UNTIL] = int(time.time()) + int(E.get("LOOP_LEASE_MIN", 30))*60
             it = json.loads(gh("issue","view",str(c["num"]),"-R",REPO,"--json","updatedAt").stdout)
             write_block(c["num"], b, it["updatedAt"]); st(card={"num": c["num"], "blk": b})
         time.sleep(int(E.get("LOOP_HEARTBEAT_SEC", 120)))
@@ -938,10 +951,10 @@ def reap_once():
     lease_min = int(E.get("LOOP_LEASE_MIN", "45"))
     reclaimed = []
     for it, blk in cards(("claimed", "in_progress")):
-        if blk.get("lease_until", 0) > now: continue
+        if blk.get(CARD_FIELD_LEASE_UNTIL, 0) > now: continue
         cid = blk.get("id", "")
         # lease 期内有新 commit → 沙盒还在干活（autosave 在推），不回收
-        lease_start_ts = blk.get("lease_until", 0) - lease_min*60
+        lease_start_ts = blk.get(CARD_FIELD_LEASE_UNTIL, 0) - lease_min*60
         has_commit = False
         if cid:
             p = gh("pr","list","-R",REPO,"--head",
@@ -959,7 +972,7 @@ def reap_once():
         new["attempt"] = blk.get("attempt", 0) + 1
         new.pop("claim_id", None)
         new.pop("sandbox", None)
-        new.pop("lease_until", None)
+        new.pop(CARD_FIELD_LEASE_UNTIL, None)
         new.pop("heartbeat_at", None)
         if write_block(it["number"], new, it["updatedAt"]):
             reclaimed.append((it["number"], cid, new["attempt"]))

@@ -47,6 +47,18 @@ _INTEGRITY_KEYS = frozenset(
     SOURCE["properties"]["verification"]["properties"].keys()
 )
 
+# 字段名常量：单一事实源。schema 字段名只在此定义一次；任何消费方都应引用
+# 这些常量而非裸字符串——schema 字段重命名时只需改这里一处，避免静默破坏
+# 分散在各处的对 "lease_until" 等键名的原始字符串引用（W2-5 AC-2 / I-001）。
+CARD_FIELD_SCHEMA = "schema"
+CARD_FIELD_CARD_ID = "card_id"
+CARD_FIELD_STATE = "state"
+CARD_FIELD_LEASE_UNTIL = "lease_until"
+CARD_FIELD_HEARTBEAT_AT = "heartbeat_at"
+CARD_FIELD_ATTEMPT = "attempt"
+CARD_FIELD_MODEL = "model"
+CARD_FIELD_VERIFICATION = "verification"
+
 
 @dataclass
 class Integrity:

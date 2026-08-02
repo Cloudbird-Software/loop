@@ -23,13 +23,14 @@ def claim_card_usecase(state_chain, card_blk):
     避免调用方误以为状态已持久化。
     """
     from loopd.domain import transitions as dom
-    from loopd.domain.lease import Lease, branch_for
+    from loopd.domain.lease import Lease, branch_for, lease_epoch
 
     # domain 判转移：ready -> claimed（agent 第一步）
     to_state = dom.apply("agent", card_blk["state"], "claimed")
-    # lease_epoch = attempt（W2-3 AC-1）
-    lease = Lease(card_id=card_blk["id"], epoch=card_blk.get("attempt", 0),
-                  lease_until=0.0, heartbeat_at=0.0, ttl_sec=60)
+    # lease_epoch = attempt（W2-3 AC-1）：领卡 epoch 即尝试次数，branch 内嵌 epoch 做 fencing
+    epoch = lease_epoch(card_blk.get("attempt", 0))
+    lease = Lease(card_id=card_blk["id"], epoch=epoch,
+                  until_ts=0.0, heartbeat_at=0.0, ttl_sec=60)
     branch = branch_for(card_blk["id"], lease.epoch)
     return UsecaseResult(ok=True, detail=f"{to_state} on {branch}")
 

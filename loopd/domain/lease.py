@@ -20,6 +20,21 @@ from typing import Callable, Optional
 _EPOCH_BRANCH_RE = re.compile(r"^(.+)/e(\d+)$")
 
 
+def lease_epoch(attempt: int) -> int:
+    """Derive the epoch a card claim should use — equal to the card's attempt counter.
+
+    W2-3 AC-1: the claim epoch ('lease_epoch') is the attempt count, so bumping
+    ``attempt`` yields a fresh epoch and a new fencing domain. ``branch_for`` embeds
+    this epoch into the working branch name (``<card_id>/e<epoch>``). A claim is
+    epoch-fenced precisely so stale work from an older attempt can be detected.
+    """
+    if not isinstance(attempt, int) or isinstance(attempt, bool):
+        raise TypeError(
+            f"attempt must be an int, got {type(attempt).__name__}"
+        )
+    return int(attempt)
+
+
 def branch_for(card_id: str, epoch: int) -> str:
     """Return the epoch-embedded working branch name for a card claim.
 
@@ -54,7 +69,7 @@ class Lease:
 
     card_id: str
     epoch: int
-    lease_until: float
+    until_ts: float
     heartbeat_at: float = 0.0
     ttl_sec: Optional[float] = field(default=None, repr=False)
 
@@ -75,7 +90,8 @@ class StaleLeaseError(Exception):
 def renew_lease(lease: Lease, now_ts: float, ttl_sec: float) -> None:
     """Renew a lease against the provided wall-clock/parent-clock ``now_ts``.
 
-    Advances ``heartbeat_at`` to ``now_ts`` and ``lease_until`` to ``now_ts + ttl_sec``.
+    Advances ``heartbeat_at`` to ``now_ts`` and the lease expiry (``until_ts``)
+    to ``now_ts + ttl_sec``.
     Mutates ``lease`` in place; returns ``None``.
     """
     if now_ts < lease.heartbeat_at:
@@ -85,16 +101,16 @@ def renew_lease(lease: Lease, now_ts: float, ttl_sec: float) -> None:
             f"now_ts={now_ts} < heartbeat_at={lease.heartbeat_at}"
         )
     lease.heartbeat_at = now_ts
-    lease.lease_until = now_ts + float(ttl_sec)
+    lease.until_ts = now_ts + float(ttl_sec)
     lease.ttl_sec = float(ttl_sec)
 
 
 def is_stale(lease: Lease, now_ts: float) -> bool:
-    """Return ``True`` when ``now_ts`` is beyond the lease's ``lease_until``.
+    """Return ``True`` when ``now_ts`` is beyond the lease's expiry (``until_ts``).
 
     Stale means the lease expired and, unless renewed, the worker must self-abort.
     """
-    return now_ts > lease.lease_until
+    return now_ts > lease.until_ts
 
 
 class Watchdog:

@@ -27,6 +27,9 @@ try:
 except ImportError:
     from blocks import extract_block, inject_block
 
+# schema 字段名单一事实源（W2-5 / I-001）：租约到期等键名不裸硬编码。
+from conductor.schema_types import CARD_FIELD_LEASE_UNTIL
+
 E = os.environ
 
 
@@ -247,7 +250,7 @@ def zombie_reclaim():
     now = int(time.time())
     for it, blk in get_cards():
         if blk.get("state") not in ("claimed", "in_progress"): continue
-        lease = blk.get("lease_until", 0)
+        lease = blk.get(CARD_FIELD_LEASE_UNTIL, 0)
         if lease > now: continue
         br = f'agent/{blk.get("id","")}'
         has_commit = False
@@ -263,7 +266,7 @@ def zombie_reclaim():
         if not has_commit:
             blk["state"] = "ready"
             blk["attempt"] = blk.get("attempt", 0) + 1
-            for k in ("claim_id","sandbox","lease_until","heartbeat_at","model","session_ordinal"):
+            for k in ("claim_id","sandbox",CARD_FIELD_LEASE_UNTIL,"heartbeat_at","model","session_ordinal"):
                 blk.pop(k, None)
             write_block(it["number"], blk)
             print(f"  → #{it['number']} ({blk.get('id','?')}) reclaimed (attempt={blk['attempt']})")
@@ -334,7 +337,7 @@ def path_lease_fallback():
                 loser = blk_b if hb > ha else blk_a
                 loser_it = it_b if hb > ha else it_a
                 loser["state"] = "ready"
-                for k in ("claim_id","lease_until","heartbeat_at","sandbox","model","session_ordinal"):
+                for k in ("claim_id",CARD_FIELD_LEASE_UNTIL,"heartbeat_at","sandbox","model","session_ordinal"):
                     loser.pop(k, None)
                 write_block(loser_it["number"], loser)
                 print(f"  → #{loser_it['number']} ({loser.get('id','?')}) path conflict → ready")
