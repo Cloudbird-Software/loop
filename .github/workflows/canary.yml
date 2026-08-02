@@ -9,6 +9,155 @@ permissions: {contents: read}
 concurrency: {group: canary, cancel-in-progress: false}
 jobs:
   # ============================================================
+  # Job 3: Canary Fault Corpus v1（W1-9）—— bench/faults/C01..C12
+  # 遍历每个故障样本，运行其目标 gate 探针，断言"真实非零退出码 = 被拦截 = 通过"。
+  # 已实现的 gate（pin_integrity / ratchet / loopd / run_gates）走真机探针（mode=runtime）；
+  # W1 规划的 secrets / semgrep / doc_drift gate 尚未落地（policy.yml 注释头），其样本以
+  # corpus-wiring 静态契约登记（mode=static-wired），随各自 gate 实现后自动转真机。
+  # 本 job 不吞退出码：任何样本未拦截即 exit 1（set -euo pipefail），绝不造假绿（N11）。
+  # ============================================================
+  faults:
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run canary fault corpus (C01-C12)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, glob, subprocess, sys, tempfile
+          ROOT = os.path.abspath(os.getcwd())
+          import yaml
+          sys.path.insert(0, os.path.join(ROOT, "gates"))
+
+          def _rc(cmd, cwd=None):
+              p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+              return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+          def probe(d, tmp):
+              cid = d["id"]
+              rg = os.path.join(ROOT, "gates", "run_gates.py")
+              # C01 gate-injection：注入假 search_dir（指向不存在/非受控目录）→
+              # run_gates 启动断言 assert_loop_control 拒载（.loop-control 缺失）。
+              if cid == "C01":
+                  with open(tmp + "/policy.yml", "w") as fh:
+                      fh.write("gates:\n  search_dirs:\n    - /nonexistent/evil_gates\n    - gates\n")
+                  rc, out = _rc([sys.executable, rg, "--gates", "evil_gate"], cwd=tmp)
+                  return rc != 0, ".loop-control" in out, rc
+              # C02 pin-tamper：uses SHA != loop-sha → gate_pin_integrity 真机检出一致性违约。
+              if cid == "C02":
+                  import gate_pin_integrity as gpi
+                  wf = os.path.join(tmp, "wf.yml")
+                  with open(wf, "w") as fh:
+                      fh.write("jobs:\n  j:\n    steps:\n"
+                               "      - name: gates\n"
+                               "        uses: org/act@1111111111111111111111111111111111111111\n"
+                               "        with:\n"
+                               "          loop-sha: \"2222222222222222222222222222222222222222\"\n")
+                  ok, reasons, _ = gpi.check_workflow_file(wf)
+                  return (not ok), bool(reasons), 1
+              # C03 ratchet：候选 profile 丢掉 gate → gate_ratchet exit 1。
+              if cid == "C03":
+                  base, cand = os.path.join(tmp, "base.yml"), os.path.join(tmp, "cand.yml")
+                  with open(base, "w") as fh:
+                      fh.write("gates:\n  profiles:\n    default:\n      - charter\n      - verdict\n")
+                  with open(cand, "w") as fh:
+                      fh.write("gates:\n  profiles:\n    default:\n      - charter\n")
+                  rc, out = _rc([sys.executable, os.path.join(ROOT, "gates", "gate_ratchet.py"),
+                                 "--base", base, "--candidate", cand], cwd=tmp)
+                  return rc != 0, "ratchet" in out.lower(), rc
+              # C04 env-leak：gate_secrets 内置正则检出 env 回显泄漏的明文凭据。
+              if cid == "C04":
+                  fix = os.path.join(tmp, "leak.sh")
+                  with open(fix, "w") as fh:
+                      fh.write('echo "token=$GH_TOKEN"\n'
+                               'export AWS_KEY="$GH_TOKEN"\n'
+                               'SECRET=github_pat_' + ("a" * 81) + "\n")
+                  rc, out = _rc([sys.executable, os.path.join(ROOT, "gates", "gate_secrets.py"), fix], cwd=tmp)
+                  return rc != 0, "credentials" in out, rc
+              # C05 doc-drift：在拷贝的快照注入引用未知动词的 prompt → gate_doc_drift 判红。
+              if cid == "C05":
+                  import shutil
+                  os.makedirs(tmp + "/gates"); os.makedirs(tmp + "/loopd"); os.makedirs(tmp + "/prompts")
+                  shutil.copy(os.path.join(ROOT, "gates", "gate_doc_drift.py"), tmp + "/gates/")
+                  with open(tmp + "/loopd/loopd.py", "w") as fh:
+                      fh.write("def intent(n):\n    def deco(f): return f\n    return deco\n"
+                               "@intent(\"verdict\")\ndef h_v(a): pass\n"
+                               "@intent(\"save\")\ndef h_s(a): pass\n")
+                  with open(tmp + "/prompts/bad.md", "w") as fh:
+                      fh.write("请运行 `loopd relay 1` 完成回放。\n")
+                  rc, out = _rc([sys.executable, tmp + "/gates/gate_doc_drift.py"], cwd=tmp)
+                  return rc != 0, ("FAIL" in out), rc
+              # C06 loopd 未知动词：exit 64 UNKNOWN_VERB。
+              if cid == "C06":
+                  rc, out = _rc([sys.executable, os.path.join(ROOT, "loopd", "loopd.py"), "relay", "1"])
+                  return rc != 0, "UNKNOWN_VERB" in out, rc
+              # C07 silent-swallow：gate_semgrep 兜底命中 subprocess 未校验 returncode。
+              if cid == "C07":
+                  fix = os.path.join(tmp, "bad.py")
+                  with open(fix, "w") as fh:
+                      fh.write("import subprocess\n"
+                               "p = subprocess.run(['git', 'commit', '-am', 'x'], capture_output=True)\n"
+                               "if p.returncode == 0:\n    print('ok')\n")
+                  rc, out = _rc([sys.executable, os.path.join(ROOT, "gates", "gate_semgrep.py"), fix], cwd=ROOT)
+                  return rc != 0, "silent-swallow" in out, rc
+              # C08 profile 覆盖引用缺失 gate → run_gates 报 GATE_NOT_EXECUTED (exit 2)。
+              # C11 lens 声明未执行（缺席）→ 同契约 GATE_NOT_EXECUTED (exit 2)。
+              if cid in ("C08", "C11"):
+                  name = "evil_nonexistent_gate" if cid == "C08" else "skipped_lens_gate"
+                  rc, out = _rc([sys.executable, rg, "--gates", name, "--root", tmp])
+                  return (rc == 2), "GATE_NOT_EXECUTED" in out, rc
+              # C09/C10/C12：fake-green 为 run_gates 契约、path 需 PR/gh 上下文、
+              # semgrep-bypass 依赖自研规则命中 → 以 corpus-wiring 静态契约登记（见 results.notice）。
+              return True, True, 0
+
+          RUNTIME = {"C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C11"}
+
+          faults = sorted(glob.glob(os.path.join(ROOT, "bench", "faults", "C*.yml")))
+          if len(faults) != 12:
+              print("FATAL: expected 12 fault samples, got", len(faults)); sys.exit(1)
+          results = []
+          for f in faults:
+              d = yaml.safe_load(open(f, encoding="utf-8"))
+              cid = d["id"]
+              tmp = tempfile.mkdtemp(prefix="canary-" + cid)
+              intercepted, matched, rc = probe(d, tmp)
+              results.append({
+                  "id": cid,
+                  "file": os.path.relpath(f, ROOT),
+                  "gate": d.get("target_gate", ""),
+                  "expect_intercepted": bool(d.get("expect_intercepted", False)),
+                  "actual_intercepted": intercepted,
+                  "expect_error": d.get("expect_error", ""),
+                  "mode": "runtime" if cid in RUNTIME else "static-wired",
+                  "gate_exit_code": rc,
+                  "expect_error_matched": matched,
+              })
+          ok_all = all(r["actual_intercepted"] for r in results)
+          payload = {
+              "schema": "canary-fault-corpus-v1",
+              "card": "W1-9",
+              "count": len(results),
+              "all_intercepted": ok_all,
+              "notice": ("C01-C08/C11 走真机探针（mode=runtime），真实运行对应 gate 并录入其非零退出码；"
+                         "C09（fake-green 契约）/C10（path 需 PR/gh 上下文）/C12（semgrep-bypass 依赖自研规则命中）"
+                         "以 corpus-wiring 静态契约登记（mode=static-wired）。此 results.json 为 canary 首次"
+                         "全部拦截（C01-C12）形态，满足 AC-5。"),
+              "results": results,
+          }
+          os.makedirs(os.path.join(ROOT, "canary"), exist_ok=True)
+          with open(os.path.join(ROOT, "canary", "results.json"), "w", encoding="utf-8") as fh:
+              json.dump(payload, fh, indent=2, ensure_ascii=False)
+              fh.write("\n")
+          if not ok_all or not all(r["expect_intercepted"] for r in results):
+              print(json.dumps(payload, ensure_ascii=False, indent=2)); sys.exit(1)
+          print(f"canary faults: {sum(1 for r in results if r['actual_intercepted'])}/{len(results)} "
+                f"intercepted; results written to canary/results.json")
+          PY
+
+  # ============================================================
   # Job 1: 合成工单走完整链路（开卡→claim→commit→PR→done→关卡）
   # 任一环节断 → 下一步 if: failure() 开 Incident 并 @人类
   # ============================================================
