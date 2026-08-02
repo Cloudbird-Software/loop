@@ -16,6 +16,10 @@ import os
 import pathlib
 import datetime
 
+# schema 字段名单一事实源（W2-5 / I-001）：租约到期等键名不裸硬编码。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from conductor.schema_types import CARD_FIELD_LEASE_UNTIL
+
 # Actions 公开定价（Linux，2 核）：$0.008/分钟。仅作确定性估算，非真实账单。
 ACTIONS_RATE_USD_PER_MIN = 0.008
 USD_TO_CNY = 7.2
@@ -87,7 +91,7 @@ def _tally(rs, actors):
 
 
 def detect_zombie_cards(issues, ref_ts):
-    """僵尸卡：state ∈ {claimed, in_progress} 且 lease_until < ref_ts。"""
+    """僵尸卡：state ∈ {claimed, in_progress} 且租约到期 < ref_ts。"""
     zombie = []
     for it in issues:
         body = it.get("body", "") or ""
@@ -100,7 +104,7 @@ def detect_zombie_cards(issues, ref_ts):
             continue
         if blk.get("state") not in ("claimed", "in_progress"):
             continue
-        lease = blk.get("lease_until", 0)
+        lease = blk.get(CARD_FIELD_LEASE_UNTIL, 0)
         try:
             lease_f = float(lease)
         except (TypeError, ValueError):
@@ -110,7 +114,7 @@ def detect_zombie_cards(issues, ref_ts):
                 "number": it.get("number"),
                 "id": blk.get("id", "?"),
                 "state": blk.get("state"),
-                "lease_until": lease_f,
+                CARD_FIELD_LEASE_UNTIL: lease_f,
                 "sandbox": blk.get("sandbox", "?"),
             })
     return zombie
@@ -231,8 +235,8 @@ def main():
     lines += ["", "## Zombie cards", f"**count: {len(zombie)}**"]
     if zombie:
         for z in zombie:
-            lease_str = datetime.datetime.fromtimestamp(z["lease_until"], datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            lines.append(f"- #{z['number']} ({z['id']}) state={z['state']} lease_until={lease_str} sandbox={z['sandbox']}")
+            lease_str = datetime.datetime.fromtimestamp(z[CARD_FIELD_LEASE_UNTIL], datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            lines.append(f"- #{z['number']} ({z['id']}) state={z['state']} 租约到期={lease_str} sandbox={z['sandbox']}")
     else:
         lines.append("(none)")
 

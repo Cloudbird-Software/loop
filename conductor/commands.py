@@ -21,6 +21,12 @@
 """
 import json, os, subprocess, sys, re, pathlib, argparse, time
 
+# schema 字段名单一事实源（W2-5 / I-001）：造卡模板里的键名不裸硬编码。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from conductor.schema_types import CARD_FIELD_LEASE_UNTIL
+
 E = os.environ
 REPO = f'{E.get("LOOP_ORG", E.get("GITHUB_REPOSITORY_OWNER",""))}/{E.get("LOOP_REPO","product-x")}'
 MAX_REVISIONS = 2
@@ -261,7 +267,7 @@ _Objective added per human instruction._
   "state": "ready", "tier": "standard", "role": "impl",
   "paths": ["src/**"],
   "forbid_paths": [".github/**","settings/**","tests/acceptance/**","contracts/**",".specify/**"],
-  "claim_id": null, "lease_until": null, "heartbeat_at": null,
+  "claim_id": null, "{CARD_FIELD_LEASE_UNTIL}": null, "heartbeat_at": null,
   "attempt": 0, "session_ordinal": null, "model": null,
   "origin": {{"kind":"human","ref":"pr-comment"}},
   "budget": {{"max_diff_lines": 600, "max_minutes": 120}},

@@ -129,3 +129,11 @@ gates:
       - lockdiff
       - heterogeneity
       - conformance
+# W2-8 身份外置：models 段（model id → family → vendor 映射）。
+# gate_heterogeneity 读此映射做 family/vendor 级异构判定；materializer 派卡时把
+# model/family/vendor 落 leases/<card>.json。条目与 ROUTING.yaml 的 providers/models 对齐。
+models:
+  gpt-5: {family: gpt, vendor: openai}
+  deepseek-chat: {family: deepseek, vendor: deepseek}
+  qwen3-max: {family: qwen, vendor: alibaba}
+  qwen-turbo: {family: qwen, vendor: alibaba}

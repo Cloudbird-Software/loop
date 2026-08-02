@@ -27,6 +27,9 @@ try:
 except ImportError:
     from blocks import extract_block, inject_block
 
+# schema 字段名单一事实源（W2-5 / I-001）：租约到期等键名不裸硬编码。
+from conductor.schema_types import CARD_FIELD_LEASE_UNTIL
+
 E = os.environ
 
 
@@ -247,7 +250,7 @@ def zombie_reclaim():
     now = int(time.time())
     for it, blk in get_cards():
         if blk.get("state") not in ("claimed", "in_progress"): continue
-        lease = blk.get("lease_until", 0)
+        lease = blk.get(CARD_FIELD_LEASE_UNTIL, 0)
         if lease > now: continue
         br = f'agent/{blk.get("id","")}'
         has_commit = False
@@ -263,7 +266,7 @@ def zombie_reclaim():
         if not has_commit:
             blk["state"] = "ready"
             blk["attempt"] = blk.get("attempt", 0) + 1
-            for k in ("claim_id","sandbox","lease_until","heartbeat_at","model","session_ordinal"):
+            for k in ("claim_id","sandbox",CARD_FIELD_LEASE_UNTIL,"heartbeat_at","model","session_ordinal"):
                 blk.pop(k, None)
             write_block(it["number"], blk)
             print(f"  → #{it['number']} ({blk.get('id','?')}) reclaimed (attempt={blk['attempt']})")
@@ -334,7 +337,7 @@ def path_lease_fallback():
                 loser = blk_b if hb > ha else blk_a
                 loser_it = it_b if hb > ha else it_a
                 loser["state"] = "ready"
-                for k in ("claim_id","lease_until","heartbeat_at","sandbox","model","session_ordinal"):
+                for k in ("claim_id",CARD_FIELD_LEASE_UNTIL,"heartbeat_at","sandbox","model","session_ordinal"):
                     loser.pop(k, None)
                 write_block(loser_it["number"], loser)
                 print(f"  → #{loser_it['number']} ({loser.get('id','?')}) path conflict → ready")
@@ -1022,6 +1025,140 @@ def generate_digest():
     print(f"  → wrote {HUMAN_TODO_OUTPUT}")
 
 # ==================================================================
+# W2-8 tick supervisor：Step 注册表 + per-step 超时/异常/last_success_at
+# 禁止 try/except pass：任何 step 的异常/超时/不可用都记录为真实结果（fail-closed）。
+# ==================================================================
+import signal as _signal
+
+
+class Step:
+    """一个可监督的子步：注册名 + 目标函数 + 独立超时 + 最近成功时间戳。
+
+    归监督器持有 last_success_at / last_error / status（ok|exception|timed_out|unavailable）。
+    """
+    def __init__(self, name, fn, timeout_sec=120):
+        self.name = name
+        self.fn = fn
+        self.timeout_sec = timeout_sec
+        self.last_success_at = None   # per-step 最近成功时间戳
+        self.last_ran_at = None
+        self.last_error = None
+        self.status = None
+
+
+def state_integrity_audit():
+    """W2-8 新增步：接 W2-4——用 conductor.state_audit 校验卡片状态哈希链。
+
+    找不到链文件不算绿：抛 _StepInterrupted → 监督器记录 status=unavailable
+    （真实结果，fail-closed），绝不当作"成功跳过"。
+    """
+    print("[state_integrity_audit] verify card-state hash chain (W2-4)...")
+    from conductor import state_audit
+
+    cand = []
+    base = (_env(E).get("LOOP_STATE") or "").strip()
+    if base:
+        cand.append(os.path.join(base, "cards", "chains.json"))
+    if _env(E).get("LOOP_STATE_CHAIN"):
+        cand.insert(0, _env(E)["LOOP_STATE_CHAIN"])
+    cand += [
+        str(LOOP_ROOT / ".loop" / "state" / "cards-chain.json"),
+        str(LOOP_ROOT / ".loop" / "state" / "chain.json"),
+        str(LOOP_ROOT / ".loop" / "state.json"),
+    ]
+    chain_file = next((p for p in cand if os.path.exists(p)), None)
+    if not chain_file:
+        raise _StepInterrupted(
+            "state_integrity_audit: no card-state chain file found; "
+            "recorded as unavailable (fail-closed, not green)"
+        )
+    blocks = state_audit.load_blocks(chain_file)
+    rc = state_audit.audit(blocks)
+    if rc != 0:
+        raise _StepInterrupted(f"state_integrity_audit: chain audit FAILED (rc={rc})")
+    print("state_integrity_audit: chain verified OK")
+
+
+class _StepInterrupted(Exception):
+    """步骤因不可用/内部失败需上报真实结果时抛出（不被当作静默 ok）。"""
+
+
+class _StepTimeoutError(Exception):
+    """某些平台无 SIGALRM 时的超时兜底标记（见 run_step）。"""
+
+
+# Step 注册表：主循环监督的对象（按 tick 既有顺序）。
+STEPS = [
+    Step("zombie_reclaim", zombie_reclaim, timeout_sec=120),
+    Step("escalate", escalate, timeout_sec=120),
+    Step("unblock_deps", unblock_deps, timeout_sec=120),
+    Step("path_lease_fallback", path_lease_fallback, timeout_sec=120),
+    Step("tier_judge", tier_judge, timeout_sec=120),
+    Step("liveness_check", liveness_check, timeout_sec=120),
+    Step("audit_shard_rotate", audit_shard_rotate, timeout_sec=120),
+    Step("occurrences_bump_severity", occurrences_bump_severity, timeout_sec=120),
+    Step("plan_inbox_pack", plan_inbox_pack, timeout_sec=120),
+    Step("silent_auto_release", silent_auto_release, timeout_sec=120),
+    Step("race_mode_handler", race_mode_handler, timeout_sec=120),
+    Step("state_integrity_audit", state_integrity_audit, timeout_sec=120),  # 接 W2-4
+]
+
+
+def _step_timeout_handler(signum, frame):
+    raise _StepTimeoutError(f"step exceeded timeout ({signum}s)")
+
+
+def run_step(step):
+    """执行单个 step，应用其独立超时并记录异常/成功时间戳（绝不 try/except pass）。"""
+    has_alarm = hasattr(_signal, "SIGALRM")
+    old_handler = None
+    if has_alarm:
+        old_handler = _signal.signal(_signal.SIGALRM, _step_timeout_handler)
+        _signal.alarm(step.timeout_sec)
+    try:
+        step.fn()
+        step.status = "ok"
+        step.last_success_at = time.time()
+        step.last_error = None  # 成功后清除历史错误，避免监督摘要误报旧失败
+    except _StepTimeoutError:
+        step.status = "timed_out"
+        step.last_error = f"step {step.name} timed out after {step.timeout_sec}s"
+    except _StepInterrupted as e:
+        step.status = "unavailable"
+        step.last_error = str(e)
+    except Exception as e:  # 记录非空异常（fail-closed），不静默吞
+        step.status = "exception"
+        step.last_error = f"{type(e).__name__}: {e}"
+    finally:
+        if has_alarm:
+            _signal.alarm(0)
+            _signal.signal(_signal.SIGALRM, old_handler)
+    step.last_ran_at = time.time()
+    bits = [f"→ step {step.name}: status={step.status}"]
+    if step.last_error:
+        bits.append(f"error: {step.last_error}")
+    if step.last_success_at:
+        bits.append(f"last_success_at={step.last_success_at}")
+    print("  " + ", ".join(bits))
+    return step.status
+
+
+def run_steps(steps=None):
+    """监督器跑全部注册 step；任一非 ok 记为真实结果，整体返回 False（fail-closed）。"""
+    steps = steps if steps is not None else STEPS
+    print(f"--- tick supervisor: supervising {len(steps)} steps ---")
+    ok = True
+    for step in steps:
+        if run_step(step) != "ok":
+            ok = False
+    print("--- tick supervisor summary ---")
+    for step in steps:
+        print(f"  {step.name}: status={step.status}, last_success_at={step.last_success_at}, "
+              f"last_error={step.last_error}")
+    return ok
+
+
+# ==================================================================
 # main
 # ==================================================================
 def main(argv=None):
@@ -1057,18 +1194,13 @@ def main(argv=None):
     if _freeze.get("all"):
         print("FROZEN: policy.freeze.all=true, skipping tick writes (wave frozen)")
         return
-    zombie_reclaim()
-    escalate()
-    unblock_deps()
-    path_lease_fallback()
-    tier_judge()
-    liveness_check()
-    audit_shard_rotate()        # [7]
-    occurrences_bump_severity() # [8]
-    plan_inbox_pack()           # [9]
-    silent_auto_release()       # [10]
-    race_mode_handler()         # [11]
+    # W2-8：主循环由 tick supervisor 监督（Step 注册表 + 每步超时/异常/last_success_at）。
+    ok = run_steps()
     print("=== tick complete ===")
+    if not ok:
+        # fail-closed：任一 registered step 未绿（异常/超时/不可用）→ 非 0 退出
+        print("FAIL: one or more supervised steps did not pass (fail-closed)")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

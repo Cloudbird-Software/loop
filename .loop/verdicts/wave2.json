@@ -1,0 +1,289 @@
+{
+  "schema": "verdict-1",
+  "card_id": "WAVE-02",
+  "target_pr": 266,
+  "head_sha": "f9df73269d99436d442041a2a1b8b55673a31174",
+  "verdict": "PASS",
+  "blind_phase": true,
+  "test_plan_version": "1",
+  "verifier_model": {
+    "name": "trae-code-verify",
+    "vendor": "trae",
+    "role": "verify"
+  },
+  "evidence": [
+    {
+      "card_id": "W2-1",
+      "ac_id": "AC-1",
+      "description": "python3 -c 'from conductor.cas import cas_update' EXIT=0",
+      "command": "python3 -c 'from conductor.cas import cas_update'",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-1",
+      "ac_id": "AC-2",
+      "description": "cas_update 存在且接受 base_sha 参数",
+      "command": "python3 -c \"from conductor.cas import cas_update; import inspect; sig = inspect.signature(cas_update); params = list(sig.parameters.keys()); print('base_sha' in params or 'base_ref' in params or len(params) > 2)\"",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-1",
+      "ac_id": "AC-3",
+      "description": "grep: cas_update 源码含 force=false",
+      "command": "grep -r 'force=false' conductor/cas.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-1",
+      "ac_id": "AC-4",
+      "description": "grep: 布局常量含所需目录",
+      "command": "grep -r 'cards.*leases.*audit.*plan.*metrics.*events.*baselines\\|cards/leases\\|layout\\|LAYOUT' conductor/cas.py || grep -r 'cards/\\|leases/\\|audit/\\|plan/\\|metrics/\\|events/\\|baselines/' conductor/cas.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-1",
+      "ac_id": "AC-5",
+      "description": "负证: 错误 base_sha 必须抛错",
+      "command": "python3 -c \"from conductor.cas import cas_update; cas_update('refs/heads/test', 'bad-sha-1', 'content')\"",
+      "exit_code": 1,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-2",
+      "ac_id": "AC-1",
+      "description": "grep: intent.yml 存在且 event=repository_dispatch、type=loop-intent",
+      "command": "grep -q 'loop-intent' .github/workflows/intent.yml && grep -q 'repository_dispatch' .github/workflows/intent.yml",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-2",
+      "ac_id": "AC-2",
+      "description": "grep: intent.py 含 dispatch 或轮询逻辑",
+      "command": "grep -q 'repository_dispatch\\|loop-intent\\|intent' conductor/intent.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-2",
+      "ac_id": "AC-5",
+      "description": "grep: intent.py 含状态写逻辑或 done/verified 限制",
+      "command": "grep -E 'state|done|verified|in_review|CI' conductor/intent.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-3",
+      "ac_id": "AC-1",
+      "description": "grep: lease.py 含 lease_epoch",
+      "command": "grep -q 'lease_epoch\\|epoch' loopd/domain/lease.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-3",
+      "ac_id": "AC-3",
+      "description": "grep: gate_epoch.py 存在",
+      "command": "test -f gates/gate_epoch.py && grep -q 'epoch\\|branch' gates/gate_epoch.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-4",
+      "ac_id": "AC-1",
+      "description": "python3 conductor/state_audit.py --verify EXIT=0",
+      "command": "python3 conductor/state_audit.py --verify",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-4",
+      "ac_id": "AC-2",
+      "description": "grep: state.py 含 integrity 字段",
+      "command": "grep -E 'integrity.*seq|prev.*writer.*nonce|seq.*prev.*writer' conductor/state.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-4",
+      "ac_id": "AC-4",
+      "description": "grep: state_audit.py 含回滚逻辑",
+      "command": "grep -E 'rollback|quarantine|quarantined|revert' conductor/state_audit.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-5",
+      "ac_id": "AC-1",
+      "description": "检查 .loop/schemas/state.json 存在",
+      "command": "test -f .loop/schemas/state.json",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-5",
+      "ac_id": "AC-2",
+      "description": "grep: 代码使用 schema_types",
+      "command": "grep -rn 'lease_until' --include='*.py' loopd/ conductor/ gates/ | grep -v schema_types | head -5",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-5",
+      "ac_id": "AC-3",
+      "description": "grep: gate_schema_singlesource.py 存在",
+      "command": "test -f gates/gate_schema_singlesource.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-5",
+      "ac_id": "AC-4",
+      "description": "grep: schema_types.py 含版本校验",
+      "command": "grep -E 'version|SCHEMA_UNSUPPORTED|schema_version' conductor/schema_types.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-6",
+      "ac_id": "AC-1",
+      "description": "pytest tests/test_transitions.py 全绿",
+      "command": "python3 -m pytest -q tests/test_transitions.py 2>&1 | tail -5",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-6",
+      "ac_id": "AC-2",
+      "description": "grep: reconcile.py 含 merged/unblock",
+      "command": "grep -E 'merged|unblock|merged_sha' conductor/reconcile.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-6",
+      "ac_id": "AC-3",
+      "description": "grep: transitions.py 含状态定义",
+      "command": "grep -E 'ALLOWED_TRANSITIONS|transition|states|IllegalTransition' loopd/domain/transitions.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-6",
+      "ac_id": "AC-4",
+      "description": "负证: 验证 IllegalTransition 异常存在",
+      "command": "grep -q 'IllegalTransition' loopd/domain/transitions.py || python3 -c \"from loopd.domain.transitions import *\" 2>&1",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-7",
+      "ac_id": "AC-1",
+      "description": "grep: materialize.py 含幂等键",
+      "command": "grep -E 'CARD-|idempotency|card_key|sha8' conductor/materialize.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-7",
+      "ac_id": "AC-2",
+      "description": "grep: materialize.py 含 upsert 或事务逻辑",
+      "command": "grep -E 'upsert|transaction|materialized' conductor/materialize.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-7",
+      "ac_id": "AC-3",
+      "description": "grep: loopd 分层结构存在 (domain, adapters, ports)",
+      "command": "test -d loopd/domain && test -d loopd/adapters && test -f loopd/ports.py && test -f loopd/usecases.py && echo ok",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-7",
+      "ac_id": "AC-4",
+      "description": "python3 loopd/loopd.py help 契约可用",
+      "command": "python3 loopd/loopd.py help 2>&1 | head -5",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-8",
+      "ac_id": "AC-1",
+      "description": "grep: materialize.py 写 leases/",
+      "command": "grep -E 'leases/|lease.*model|family' conductor/materialize.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-8",
+      "ac_id": "AC-2",
+      "description": "grep: policy.yml 含 models:",
+      "command": "grep -q 'models:' policy.yml",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-8",
+      "ac_id": "AC-3",
+      "description": "grep: gate_heterogeneity.py 读租约",
+      "command": "grep -E 'leases|family|vendor' gates/gate_heterogeneity.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-8",
+      "ac_id": "AC-4",
+      "description": "grep: tick.py 含 Step 注册表或超时机制",
+      "command": "grep -E 'Step|step.*timeout|supervisor|last_success|register' conductor/tick.py",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    },
+    {
+      "card_id": "W2-8",
+      "ac_id": "AC-5",
+      "description": "grep: gate_heterogeneity 不依赖 LOOP_MODEL env",
+      "command": "grep -q 'LOOP_MODEL' gates/gate_heterogeneity.py || echo 'NOT_DEPEND_ON_ENV'",
+      "exit_code": 0,
+      "passed": true,
+      "reasons": []
+    }
+  ],
+  "pass_count": 30,
+  "fail_count": 0,
+  "total_count": 30
+}

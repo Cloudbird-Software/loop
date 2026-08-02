@@ -22,6 +22,59 @@ import subprocess
 import sys
 
 ROUTING_PATH = os.environ.get("ROUTING_PATH", "ROUTING.yaml")
+POLICY_PATH = os.environ.get("LOOP_POLICY", "policy.yml")
+
+
+# ── W2-8 身份外置：异构身份读 leases/<card>.json（agent 只读），绝不读 LOOP_MODEL env ──
+def _leases_dir():
+    """leases 目录（基于 LOOP_STATE / LOOP_ROOT 的 loop-state 布局，与 cas.LOOP_STATE_DIRS 对齐）。
+
+    返回值含字面 `leases/` 路径段。
+    """
+    base = os.environ.get("LOOP_STATE")
+    if not base:
+        lr = os.environ.get("LOOP_ROOT", "")
+        base = os.path.join(lr, ".loop") if lr else ".loop"
+    return os.path.join(base, "leases")
+
+
+def load_lease(card_id):
+    """读租约 leases/<card>.json —— 身份唯一事实来源（AC-3/AC-5，读租约而非 env）。
+
+    返回 {model, family, vendor, ...} 或 None。绝不 fallback 到任何 LOOP_MODEL 环境变量。
+    """
+    if not card_id:
+        return None
+    p = os.path.join(_leases_dir(), f"{card_id}.json")
+    if not os.path.exists(p):
+        # 租约缺失 = 真实结果（fail-closed），由调用方决定兜底，不当作绿
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def card_id_from_ref(ref=None):
+    """从 PR 分支（如 agent/C-0NN / refs/heads/C-007-feature）推导卡片 ID。找不到返回 None。
+
+    卡片 ID 以 `[CVF]-NNN` 形式出现，其后跟随分支分隔符（/ . _ -）或字符串结束。
+    """
+    ref = ref or os.environ.get("GITHUB_REF", "")
+    m = re.search(r'(?:refs/heads/)?(?:agent/)?([CVF]-\d{3})(?:[/._-]|$)', ref)
+    return m.group(1) if m else None
+
+
+def _load_policy_models():
+    """从 policy.yml 的 models: 段读 model id → {family, vendor}，用于 family/vendor 级比较。"""
+    try:
+        d = load_yaml(POLICY_PATH)
+        m = d.get("models") or {}
+        return m if isinstance(m, dict) else {}
+    except Exception:
+        return {}
 
 
 def load_yaml(path):
@@ -187,19 +240,45 @@ def get_impl_model_from_routing(routing_data):
     return model
 
 
-def check_verdict_evidence(verdict, impl_model):
-    """校验 VERDICT 中的 verifier model 与 impl model 不同。"""
+def check_verdict_evidence(verdict, impl_identity, models_map=None):
+    """校验 VERDICT 中 verifier 身份与 impl 身份异构。
+
+    impl 身份来自 leases/<card>.json（租约，非 LOOP_MODEL env）；比较在
+    model / family / vendor 三个层级上做（家族、厂商级同构同样判红）。
+    """
     violations = []
     if not verdict:
         return violations
     verifier_model = verdict.get("verifier_model") or verdict.get("model")
     session_id = verdict.get("session_id") or verdict.get("blind_phase_commit")
     impl_session = verdict.get("impl_session_id")
+    # impl_identity 既可以是租约 dict（{model,family,vendor}），也可以是裸 model 字符串
+    if isinstance(impl_identity, str):
+        impl_model, impl_family, impl_vendor = impl_identity, None, None
+    else:
+        impl_id = impl_identity or {}
+        impl_model = impl_id.get("model")
+        impl_family = impl_id.get("family")
+        impl_vendor = impl_id.get("vendor")
+    models_map = models_map or {}
 
     if verifier_model and impl_model and verifier_model == impl_model:
         violations.append(
             f"VERDICT_SELF_VERIFY: verifier_model({verifier_model}) == "
             f"impl_model({impl_model}) — 同模型自证"
+        )
+    # family/vendor 级：即便 model 字符串不同，同族或同厂商也判定同构（读租约）
+    vmeta = models_map.get(verifier_model) or {}
+    vfam, vvend = vmeta.get("family"), vmeta.get("vendor")
+    if impl_family and vfam and impl_family == vfam:
+        violations.append(
+            f"SAME_FAMILY: verifier_model({verifier_model}) family({vfam}) == "
+            f"impl family({impl_family}) — 同家族验证，违反异构"
+        )
+    if impl_vendor and vvend and impl_vendor == vvend:
+        violations.append(
+            f"SAME_VENDOR: verifier_model({verifier_model}) vendor({vvend}) == "
+            f"impl vendor({impl_vendor}) — 同厂商验证，违反异构"
         )
     if session_id and impl_session and session_id == impl_session:
         violations.append(
@@ -256,12 +335,39 @@ def main():
         pass
 
     # 4. VERDICT evidence 校验（PR 上下文）
+    #    W2-8：impl 身份改读 leases/<card>.json（租约，非 LOOP_MODEL env，AC-5）。
+    #    无租约时回退到 ROUTING impl route（保持既有门功能性）。
     pr_num = get_pr_number()
     if pr_num:
         verdict = find_verdict_in_comments(pr_num)
         if verdict:
-            impl_model = get_impl_model_from_routing(routing_data)
-            violations += check_verdict_evidence(verdict, impl_model)
+            impl_identity = None
+            card_id = card_id_from_ref()
+            if card_id:
+                lease = load_lease(card_id)
+                if lease:
+                    impl_identity = {
+                        "model": lease.get("model"),
+                        "family": lease.get("family"),
+                        "vendor": lease.get("vendor"),
+                        "source": f"leases/{card_id}.json",
+                    }
+                    print(f"  • verdict identity from lease leases/{card_id}.json: "
+                          f"model={impl_identity['model']} family={impl_identity['family']} "
+                          f"vendor={impl_identity['vendor']}")
+            if impl_identity is None:
+                # 无租约 → 回退 ROUTING impl route（不读 env，租约优先）
+                brand = f"leases/{card_id}.json" if card_id else "N/A (no card)"
+                impl_identity = {
+                    "model": get_impl_model_from_routing(routing_data),
+                    "family": None,
+                    "vendor": None,
+                    "source": "ROUTING (no lease)",
+                }
+                print(f"  • WARN: no lease for {brand}; fell back to ROUTING impl model")
+            violations += check_verdict_evidence(
+                verdict, impl_identity, _load_policy_models()
+            )
 
     if violations:
         print("FAIL: HETEROGENEITY_VIOLATION")

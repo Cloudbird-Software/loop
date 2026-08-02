@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Cloudbird-Software/loop/main/.loop/schemas/state.json",
+  "title": "CARD_STATE_BLOCK",
+  "description": "card-state json loop 块的 schema —— 单一事实源（W2-5）。conductor/schema_types.py 据此确定性派生 CardState / Integrity 类型视图。schema 版本号 = properties.schema.const（当前 N）。读者只接受 {N, N-1}，其他一律抛 SCHEMA_UNSUPPORTED，不允许 fail-open。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "card_id", "state", "attempt", "model"],
+  "properties": {
+    "schema": {
+      "const": 2,
+      "description": "schema 版本号，恒为当前 SCHEMA_VERSION（N）。"
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^[CVF]-[0-9]{3}$",
+      "description": "卡片 ID，如 C-007 / V-011 / F-001。"
+    },
+    "state": {
+      "type": "string",
+      "enum": ["ready", "claimed", "in_progress", "in_review", "done",
+               "closed", "respec", "stalled", "orphaned", "merged",
+               "abandoned", "verified"],
+      "description": "卡片状态（与 loopd.domain.transitions.STATES 对齐的单一事实源）。"
+    },
+    "lease_until": {
+      "type": ["string", "null"],
+      "description": "领卡租约到期时间戳（UTC ISO8601），null 表示无租约（如 done 态）。"
+    },
+    "heartbeat_at": {
+      "type": ["string", "null"],
+      "description": "最近心跳时间戳，null 表示从未心跳。"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "尝试次数，非负整数。"
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "持卡模型标识。"
+    },
+    "verification": {
+      "type": "object",
+      "description": "完整性校验块（可选）。",
+      "additionalProperties": false,
+      "required": ["checksum_sha256", "signals"],
+      "properties": {
+        "checksum_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "card-state 内容的 SHA-256，hex 小写。"
+        },
+        "signals": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" },
+          "description": "语言信号集合，键→布尔。"
+        }
+      }
+    }
+  }
+}
