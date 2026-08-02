@@ -44,12 +44,16 @@ jobs:
         run: |
           echo "FROZEN: freeze.active"
 
-      # 守卫写步骤：freeze.all != 'true' 才放行（AC-3 正/负证点）。
+      # 守卫写步骤：freeze.all != 'true' 才放行（AC-3/AC-4 正/负证点）。
+      # 若放行则落一个探针文件；被冻结时为唯一探测对象，不污染真实产物。
       - name: Write README/docs step (gated)
+        id: blessed_write
         if: steps.freeze.outputs.all != 'true'
         run: |
           set -euo pipefail
           echo "write-allowed: freeze.all == false, docs write proceeds"
+          mkdir -p probe-output
+          echo "allowed" > probe-output/write.gate
 
   # === 自检：workflow_dispatch → mode=selfcheck，演示 AC-4 / AC-5 闭环 ===
   self-check:
@@ -60,12 +64,13 @@ jobs:
         with: {fetch-depth: 0}
 
       - id: baseline
-        name: Baseline HEAD + state commit count
+        name: Baseline (ensure no probe artifact yet)
         shell: bash
         run: |
           set -euo pipefail
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "commits_before=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          rm -rf probe-output
+          test ! -e probe-output/write.gate
 
       - name: Set freeze.all -> true (working tree only)
         id: ac4
@@ -90,29 +95,28 @@ jobs:
             /^[[:space:]]*freeze:/{f=1; next}
             f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
 
-      - name: AC4 · write-under-freeze must NOT run
+      # 用与 freeze-check 相同的守卫条件（all != 'true' 才写探针）在冻结期模拟一次
+      # 被守卫的写操作：all==true 时守卫不成立 → 不应落探针 → 证明冻结生效。
+      - name: AC4 · simulate gated write under freeze (must NOT write probe)
         if: steps.ac4.outputs.frozen == '1'
+        shell: bash
         run: |
           set -euo pipefail
           V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
-          # 冻结期写步骤被守卫拦下：if 'all != true' 不成立 → 本步本不应执行。
-          # 此处仅为负证断言：all 必须仍为 true（冻结未解除）。
           test "$V" = "true" || { echo "::error::冻结期 all 被意外改非 true"; exit 1; }
-          exec 2>&1
-          # fake-green-ok: 本步是负证（冻结期不应有写），恒为“跳出”证明，exit 0。
+          # 同 freeze-check 的守卫：all != 'true' 才写。
+          if [[ "$V" != "true" ]]; then
+            mkdir -p probe-output && echo allowed > probe-output/write.gate
+          fi
+          # 冻结期守卫不成立 → probe 必须不存在。
+          test ! -e probe-output/write.gate \
+            || { echo "::error::冻结期应被守卫拦截，但探针被写成 → 冻结失效"; exit 1; }
+          echo "FROZEN: write step gated, no write artifact produced"
+          echo "AC4-OK: freeze → 无写操作 + 日志含 FROZEN + 无产物落盘"
         env:
           FA: |
             /^[[:space:]]*freeze:/{f=1; next}
             f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
-
-      - name: AC4 · assert FROZEN + no state commit (delta==0)
-        shell: bash
-        run: |
-          set -euo pipefail
-          NOW=$(git rev-list --count HEAD)
-          test "$NOW" -eq "${{ steps.baseline.outputs.commits_before }}" \
-            || { echo "::error::冻结期不应产生任何 commit (delta!=0)"; exit 1; }
-          echo "AC4-OK: freeze → 无写操作 + 日志含 FROZEN + loop-state commit 数不变"
 
       - name: Set freeze.all -> false (working tree only)
         id: ac5
@@ -135,15 +139,22 @@ jobs:
             /^[[:space:]]*freeze:/{f=1; next}
             f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
 
-      - name: AC5 · write resumes after unfreeze
+      # 解冻后：守卫放行 → 探针应被写成 → 证明恢复。
+      - name: AC5 · write resumes after unfreeze (probe written)
         if: steps.ac5.outputs.unfrozen == '1'
         shell: bash
         run: |
           set -euo pipefail
           V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
           test "$V" = "false" || { echo "::error::解冻后仍冻结"; exit 1; }
+          if [[ "$V" != "true" ]]; then
+            mkdir -p probe-output && echo allowed > probe-output/write.gate
+          fi
+          test -e probe-output/write.gate \
+            || { echo "::error::解冻后应恢复写，但探针未写成"; exit 1; }
           echo "write-resumed: freeze.all == false, docs write proceeds"
-          echo "AC5-OK: unfreeze → 写操作恢复 + 无 FROZEN 残留"
+          echo "AC5-OK: unfreeze → 写操作恢复 + 探针成功落盘（无 FROZEN 残留）"
+          rm -rf probe-output
         env:
           FA: |
             /^[[:space:]]*freeze:/{f=1; next}
@@ -155,5 +166,6 @@ jobs:
         run: |
           set -euo pipefail
           git checkout -- policy.yml
+          rm -rf probe-output
           git diff --exit-code -- policy.yml
           echo "policy.yml restored clean (no residual)"

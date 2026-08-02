@@ -9,9 +9,7 @@ N30：非白名单身份调用 add_decision 会被拒绝（raise/quarantine）�
 from __future__ import annotations
 
 import datetime
-import json
 import os
-import pathlib
 
 # 唯一规则键 → SLA（小时）。keys 必须全局唯一（AC-4）。
 RULES = {

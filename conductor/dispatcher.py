@@ -19,7 +19,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from conductor import backpressure
+from conductor.backpressure import admit, check_budget
 
 POLICY_FILE = os.environ.get("LOOP_POLICY", "policy.yml")
 ASSIGNMENTS_SUBDIR = "assignments"          # loop-state/assignments/<sandbox>.json
@@ -78,7 +78,7 @@ def dispatch(candidates, sandbox_id, active_cards=0, per_repo_active=0,
                                            "rejected": len(candidates), "degraded": False})()
 
     # A7 收敛(AC-4b)：预算/并发裁决统一走 backpressure，不写第二套逻辑
-    budget = backpressure.check_budget(active_cards, per_repo_active,
+    budget = check_budget(active_cards, per_repo_active,
                                        headers=headers, policy=cfg)
     if not budget.ok:
         print(f"dispatch rejected by backpressure: {budget.reason}")
@@ -86,7 +86,7 @@ def dispatch(candidates, sandbox_id, active_cards=0, per_repo_active=0,
                                            "rejected": len(candidates), "degraded": True})()
 
     max_conc = int(cfg.get("max_concurrent_sandboxes", 4) or 4)
-    accepted, rejected = backpressure.admit(list(candidates), active_count=active_cards,
+    accepted, rejected = admit(list(candidates), active_count=active_cards,
                                             max_concurrent=max_conc, policy=cfg)
 
     assigns_dir = root / ASSIGNMENTS_SUBDIR  # 落 loop-state/assignments/<sandbox>.json

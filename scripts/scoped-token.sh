@@ -17,13 +17,11 @@
 #
 # Fake-green note (N11): minting requires GitHub App credentials + network.
 # In an offline / credential-less sandbox this script CANNOT reach the real mint
-# endpoint, so it prints an explicit stderr assertion that any minted token MUST
-# expire within 1h and exits 0 as a documented *runtime gate*. The real, hard
-# enforcement happens in CI (the workflow) where gh + credentials + network are
-# present and the actual `expires_at` is asserted. This is not a silent pass;
-# the constraint is explicitly stated to stderr.
-# fake-green-ok: offline runtime-gate assertion only; CI path asserts the real
-#                expires_at via assert_short_lived below.
+# endpoint. To honor the "hard guarantees" (no fake green), minting-unavailable
+# now FAILS by default (non-zero). An explicit `--allow-offline` opt-in is the
+# ONLY way to accept an offline runtime-gate assertion — it prints the constraint
+# to stderr and exits 0. This makes silent green impossible for automation.
+# fake-green-ok: only with explicit `--allow-offline`; never by default.
 
 set -euo pipefail
 
@@ -158,6 +156,12 @@ mint_via_gh() {
 # main
 # ---------------------------------------------------------------------------
 main() {
+  local allow_offline=0
+  for arg in "$@"; do
+    if [[ "$arg" == "--allow-offline" ]]; then
+      allow_offline=1
+    fi
+  done
   # Mode A: explicit token + expires_at passed (e.g. from the workflow) — only
   # validate the *already-minted* token against the 1h gate. No re-mint.
   if (( $# >= 2 )); then
@@ -178,17 +182,27 @@ main() {
     exit 0
   fi
   if (( rc == 9 )); then
-    # Minting unavailable here (no credentials / no gh / offline). Emit the
-    # explicit runtime-gate assertion to stderr — NOT a silent pass.
-    # fake-green-ok: offline runtime-gate assertion only (see header note).
+    # Minting unavailable here (no credentials / no gh / offline). Fail by default
+    # (honor hard guarantees; forbid silent green). ONLY an explicit --allow-offline
+    # opt-in accepts the documented offline run-time-gate assertion.
+    if (( allow_offline == 0 )); then
+      cat >&2 <<'EOF'
+scoped-token: ERROR minting is UNAVAILABLE in this environment (credentials/gh/network
+scoped-token: absent). Refusing to exit 0 silently: that would be a fake-green (N11).
+scoped-token: Re-run with `--allow-offline` to explicitly accept an offline run-time-gate
+scoped-token: assertion instead of a real mint.
+EOF
+      exit 9
+    fi
     cat >&2 <<EOF
 scoped-token: MINTING UNAVAILABLE in this environment (credentials/gh/network absent).
-scoped-token: RUNTIME GATE ASSERTION: any GitHub App installation token minted for
-scoped-token: this session MUST expire within ${SECONDS_PER_HOUR}s (1h) of now, be narrowed to
-scoped-token: the explicit 'owner/repositories' list, and be ceilinged at
+scoped-token: RUNTIME GATE ASSERTION (explicit --allow-offline): any GitHub App
+scoped-token: installation token minted for this session MUST expire within
+scoped-token: ${SECONDS_PER_HOUR}s (1h) of now, be narrowed to the explicit
+scoped-token: 'owner/repositories' list, and be ceilinged at
 scoped-token: 'permissions.contents: read'. A persistent/常驻 token or PAT is forbidden.
 scoped-token: This is a documented assertion only; the real expires_at check is
-scoped-token: enforced in CI by assert_short_lived. N11: not a fake-green.
+scoped-token: enforced in CI by assert_short_lived. N11: accepted via explicit opt-in.
 EOF
     exit 0
   fi

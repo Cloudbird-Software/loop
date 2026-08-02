@@ -11,9 +11,6 @@ W2 关闭判定"事件-投影对账连续 72h diff=0"：把事件日志里记录
 """
 from __future__ import annotations
 
-import json
-import pathlib
-
 from conductor import events as _events
 
 
@@ -80,7 +77,7 @@ def reconcile(events, projection=None, transition_fn=None):
       - 事件声称的迁移与投影不符 → diff+=1、逐条 mismatch（反 fail-open，N30）；
       - 否则 ok=True、diff=0（覆盖每类已发生迁移）。
     """
-    transition_fn = transition_fn or (lambda ev: _default_projected_state(ev))
+    transition_fn = transition_fn or _default_projected_state
     if projection is None:
         projection = {}
 

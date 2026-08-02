@@ -1153,15 +1153,19 @@ def escalate_step():
 
 
 def _set_freeze_all(value):
-    """把 policy.yml 的 freeze.all 置为 value（W3-TK 是唯一写者，N3）。"""
-    import re
+    """把 policy.yml 的 freeze.all 置为 value（W3-TK 是唯一写者，N3）。
+
+    CodeQL 修复：#1 删除函数内重复的 `import re`（模块级 L12 已导入）；
+    #2 为正则加 re.MULTILINE —— policy.yml 中 `freeze:` 位于文件中段（非文件首行），
+       若缺 MULTILINE，`^` 仅锚定字符串开头，将永不命中 → 杀开关失效（原实现缺陷）。
+    """
     path = pathlib.Path(LOOP_ROOT) / POLICY_FILE
     text = path.read_text(encoding="utf-8")
     new_text = re.sub(r'^(\s*freeze:\s*\n\s*all:\s*)false', r'\g<1>' + str(value).lower(), text,
-                      count=1)
+                      count=1, flags=re.MULTILINE)
     if new_text == text:
         new_text = re.sub(r'^(\s*freeze:\s*\n\s*all:\s*)true', r'\g<1>' + str(value).lower(), text,
-                          count=1)
+                          count=1, flags=re.MULTILINE)
     path.write_text(new_text, encoding="utf-8")
     print(f"    policy.freeze.all → {value}")
 

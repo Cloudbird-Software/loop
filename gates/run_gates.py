@@ -201,7 +201,8 @@ def reduce_exit(results):
 def run_one(name, path, timeout, cwd=None):
     """执行单个 gate，返回 dict(name/status/exit_code/duration_ms/path/detail/reason)。
 
-    status 映射到新分类：pass / fail / error（traceback|timeout|spawn 经 reason 细分）/ not_found。</summary>"""
+    status 映射到新分类：pass / fail / error（traceback|timeout|spawn 经 reason 细分）/ not_found。
+    """
     t0 = time.monotonic()
     # W1-4：执行前打印解析出的绝对路径与文件内容 SHA256（加载路径收敛 + 可审计注入）
     with open(path, "rb") as pf:
@@ -307,7 +308,7 @@ def main():
         results.append({"name": "<min_gates>", "status": "unresolved", "exit_code": None,
                         "duration_ms": 0, "path": None,
                         "detail": f"executed {executed} < min_gates {min_gates}",
-                        "reason": "root_unavailable"})
+                        "reason": "min_gates_not_met"})
         exit_code = reduce_exit(results)
 
     summary = {"profile": args.profile, "gates": results, "exit_code": exit_code}

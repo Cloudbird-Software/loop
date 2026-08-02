@@ -91,10 +91,19 @@ def check_budget(active_cards=0, per_repo_active=0, headers=None, policy=None, e
 
     # AC-5（负证）：LOOP_SIMULATE_BUDGET=0 → 日预算=0 → 拒绝 + degraded + Incident
     sim_budget = env.get("LOOP_SIMULATE_BUDGET")
-    if sim_budget is not None and sim_budget != "" and float(sim_budget) == 0:
-        return Decision(False,
-                        "daily budget is 0 (LOOP_SIMULATE_BUDGET=0); refusing to dispatch",
-                        degraded=True)
+    if sim_budget is not None and sim_budget != "":
+        try:
+            sim_val = float(sim_budget)
+        except ValueError:
+            # CodeQL：非数值（如 "0USD"）直接 float() 会抛 ValueError 使 dispatcher/tick
+            # 崩溃；改为受控降级（fail-closed）—— 拒绝并发并标记 degraded，绝不 panic。
+            return Decision(False,
+                            f"LOOP_SIMULATE_BUDGET non-numeric {sim_budget!r}; refusing to dispatch",
+                            degraded=True)
+        if sim_val == 0:
+            return Decision(False,
+                            "daily budget is 0 (LOOP_SIMULATE_BUDGET=0); refusing to dispatch",
+                            degraded=True)
 
     if active_cards >= max_concurrent:
         return Decision(False, f"active_cards {active_cards} >= max_concurrent {max_concurrent}", degraded=True)

@@ -153,8 +153,10 @@ jobs:
               json.dump(payload, fh, indent=2, ensure_ascii=False)
               fh.write("\n")
           # AC-1/AC-2/AC-5：跨自然日累计的权威历史改为 append-only（追加写，open(...,'a')，绝不覆盖）。
-          # results.json 仍只作"最近一次运行"的镜像快照（供单次读）；跨日判定一律读 canary/history.jsonl。
-          # 每条含要求的字段 date / count / all_intercepted（AC-2，可机器校验）。
+          # 数据源职责（混合模式，经 V3-8 复核确认）：
+          #   - canary/history.jsonl = 权威跨日历史，append-only，含 date/count/all_intercepted（AC-2）；
+          #   - canary/results.json  = 最近一次运行的镜像快照（每次覆盖，供单次读，非跨日源）。
+          # AC-5 的语义是"跨日累计判定单一数据源"→ 由 history.jsonl 承担；results.json 仅作单次镜像不作判定源。
           hist_row = {
               "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
               "count": len(results),

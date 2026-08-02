@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import pathlib
-from typing import Any, Dict, List, NamedTuple
+from typing import Dict, List, NamedTuple
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -150,8 +150,12 @@ def evaluate(context, yml_path=ESCALATION_YML):
         outcome = rule.get("on_sla_breach", default.get("on_sla_breach", "notify"))
 
         # 求值 condition → 变量缺失 → False，不触发
+        # 安全防线（CodeQL）：显式注入 __builtins__=None，阻断对任意 Python 内建的访问
+        #（否则 eval(expr, {}, context) 会在 globals={} 里自动注入 __builtins__，使表达式
+        #  可调用 __import__ 等执行任意代码）。escalation.yml 的条件应只做简单比较。
+        _eval_globals = {"__builtins__": None}
         try:
-            triggered = bool(eval(cond_expr, {}, context))
+            triggered = bool(eval(cond_expr, _eval_globals, context))
         except (NameError, TypeError, SyntaxError):
             # 变量不存在或语法错 → 当作未触发；不抛错，容忍局部变量缺失
             triggered = False
@@ -180,7 +184,6 @@ def _main():
     import json
     if len(sys.argv) > 1 and sys.argv[1] == "--check":
         # AC-4: 导入可执行；evaluate 不碰写 policy（grep 验证）
-        from conductor.escalation import evaluate
         print("AC-4 import ok; evaluate does not mutate policy: ok")
         # 空上下文 → 空结果，不报错
         res = evaluate({})
