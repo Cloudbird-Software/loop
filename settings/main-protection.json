@@ -50,12 +50,10 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
-            "context": "loop-ci",
-            "integration_id": 15368
+            "context": "loop-ci"
           },
           {
-            "context": "loop-gates",
-            "integration_id": 15368
+            "context": "loop-gates"
           },
           {
             "context": "lint",
