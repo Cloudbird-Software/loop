@@ -1004,6 +1004,34 @@ if __name__ == "__main__":
     elif _verb in ("--version", "-v"):
         _emit({"ok": True, "version": "loopd v0.1.6"})
         sys.exit(EXIT_OK)
+    elif _verb == "--layers":
+        # W2-7 AC-3：loopd 分层自检（cli → usecases → domain ← ports/adapters）。
+        # 惰性 import + 异常兜底，绝不污染 help/其余 verb 的既有契约（AC-4）。
+        # 注：loopd.py 脚本与 loopd/ 包同名，脚本内 sys.path[0]=loopd/ 会让
+        # `import loopd` 误解析到 loopd.py；把仓根(<repo>/loopd/..)提前即可解析到包。
+        try:
+            import sys as _sys
+            _root = str(pathlib.Path(os.path.abspath(__file__)).parent.parent)
+            _sys.path.insert(0, _root)
+            import loopd.ports as _ports
+            import loopd.usecases as _usecases
+            import loopd.adapters as _adapters
+            from loopd.domain import transitions as _dom
+            _emit({
+                "ok": True,
+                "layers": {
+                    "cli": "loopd/loopd.py",
+                    "usecases": _usecases._selfcheck(),
+                    "domain": _dom.apply("agent", "ready", "claimed"),
+                    "ports": _ports._selfcheck(),
+                    "adapters": _adapters._selfcheck(),
+                    "verbs": len(VERBS),
+                },
+            })
+        except Exception as _e:  # noqa: BLE001 —— 分层加载失败要显式报错，不假绿
+            _emit({"ok": False, "error": str(_e)}, code=EXIT_CRASH)
+            sys.exit(EXIT_CRASH)
+        sys.exit(EXIT_OK)
     elif _verb in HANDLERS or _verb in ("--help", "-h"):
         _op = _verb if _verb in HANDLERS else "help"
         CFG()  # Initialize proxies before dispatching

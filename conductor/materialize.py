@@ -316,8 +316,45 @@ def auto_tier(card):
 
 
 # ============================================================
-# Idempotency check
+# Idempotency check — 事务化幂等键（W2-7）
 # ============================================================
+
+# 幂等键：CARD-<wave>-<idx>-<sha8>。同一 (wave, idx) 源卡若内容没变（sha8 相同）——
+# 或已成功落盘的卡——都不重复物化（AC-1）。
+def _card_key(card, idx):
+    wave = card.get("wave", "WAVE-UNKNOWN")
+    # _source 形如 "waves/WAVE-02.md"，取其 sha8 作为内容指纹的一部分
+    src = card.get("_source", "") or ""
+    hash8 = hashlib.sha256(src.encode()).hexdigest()[:8]
+    return f"CARD-{wave}-{idx}-{hash8}"
+
+
+def _materialized_ledger_path():
+    # 物化台账落 loop-state 是终态；本地进程先写到 .work/（gitignored 临时区），
+    # 避免被 gate_wave_immutable 当作真源误判。真实环境由 tick 同步到 loop-state/audit。
+    return pathlib.Path(E.get("LOOP_STATE_LEDGER", ".work/materialized.json"))
+
+
+def _load_ledger():
+    try:
+        data = json.loads(_materialized_ledger_path().read_text() or "{}")
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def _record_ledger(key, card_id, num, completed_at):
+    ledger = _load_ledger()
+    ledger[key] = {
+        "card_id": card_id,
+        "issue": num,
+        "completed_at": completed_at,  # 最后写入者：completed_at 最后写（AC-1）
+    }
+    plev = _materialized_ledger_path()
+    plev.parent.mkdir(parents=True, exist_ok=True)
+    plev.write_text(json.dumps(ledger, ensure_ascii=False, indent=2))
+    return key
+
 
 def check_already_materialized(wave_id):
     """Check if cards for this wave already exist (idempotency)."""
@@ -332,7 +369,8 @@ def check_already_materialized(wave_id):
             if blk and blk.get("wave") == wave_id and blk.get("schema") == 1:
                 return True
     except Exception:
-        pass
+        # 反假绿：查询失败不当作"未物化"，返回 None 让调用方决定（fail-closed 由 main 判定）
+        return None
     return False
 
 
@@ -346,6 +384,88 @@ def extract_block(body):
         return json.loads(seg)
     except Exception:
         return None
+
+
+# ============================================================
+# W2-8 身份外置：派卡时把 model/family/vendor 落 leases/<card>.json（agent 只读）
+# gate_heterogeneity 改读租约判定异构，而非读 LOOP_MODEL env（AC-5）。
+# ============================================================
+
+def _leases_dir():
+    """leases 目录（基于 LOOP_STATE / LOOP_ROOT 的 loop-state 布局，与 cas.LOOP_STATE_DIRS 对齐）。"""
+    base = E.get("LOOP_STATE") or E.get("LOOP_ROOT", "") or ".loop"
+    return pathlib.Path(base) / "leases"
+
+
+def _load_models_policy():
+    """从 policy.yml 的 models: 段读 model id → {family, vendor} 映射。
+
+    优先用 PyYAML；不可用时降级做轻量解析（只取 models: 段下的流映射行）。
+    """
+    policy_file = pathlib.Path(E.get("LOOP_POLICY", "policy.yml"))
+    try:
+        import yaml
+        with open(policy_file, encoding="utf-8") as f:
+            doc = yaml.safe_load(f) or {}
+        models = doc.get("models") or {}
+        return models if isinstance(models, dict) else {}
+    except (ImportError, FileNotFoundError):
+        pass  # 降级到下方轻量解析
+    models = {}
+    in_models = False
+    try:
+        # 仅当保险库无 PyYAML 时启用轻量解析；只处理 models: 段内的流映射行。
+        # 注：真实题材的 policy models 段用 `model: {family: x, vendor: y}` 单行流式。
+        for fsp in (policy_file, pathlib.Path(E.get("LOOP_ROOT", "")) / "policy.yml"):
+            if not fsp.exists():
+                continue
+            with open(fsp, encoding="utf-8") as f:
+                for line in f:
+                    s = line.rstrip("\n")
+                    if not s or s.startswith("#"):
+                        continue
+                    if not s[0].isspace() and ":" in s:
+                        in_models = s.strip().startswith("models:")
+                        continue
+                    if not in_models:
+                        continue
+                    m = re.match(r'^\s+([\w.-]+)\s*:\s*\{family:\s*([\w.-]+),\s*vendor:\s*([\w.-]+)\s*\}', s)
+                    if m:
+                        models[m.group(1)] = {"family": m.group(2), "vendor": m.group(3)}
+    except (OSError, ValueError) as e:
+        print(f"  ⚠ models policy fallback parse failed: {e}")
+    return models
+
+
+def write_lease(card):
+    """W2-8：把派卡的 model/family/vendor 落入 leases/<card>.json（agent 只读）。
+
+    身份外置：heterogeneity 门读此租约做 family/vendor 级判定，而非读 LOOP_MODEL env。
+    卡未分配 model 时仍照写（model/family/vendor 可为 None），保证租约文件存在。
+    """
+    cid = card.get("id")
+    if not cid:
+        print("  ⚠ write_lease: card has no id, skipping lease write")
+        return False
+    model = card.get("model")
+    fam = vend = None
+    if model:
+        meta = _load_models_policy().get(model) or {}
+        fam = meta.get("family")
+        vend = meta.get("vendor")
+    lease = {
+        "card_id": cid,
+        "model": model,
+        "family": fam,
+        "vendor": vend,
+        "written_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    d = _leases_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{cid}.json"
+    p.write_text(json.dumps(lease, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  → lease written: {p} (model={model}, family={fam}, vendor={vend})")
+    return True
 
 
 # ============================================================
@@ -482,6 +602,8 @@ def create_card_issue(card, milestone_num, parent_num, role):
     if p.returncode == 0:
         num = int(p.stdout.strip().split("/")[-1])
         set_milestone(num, milestone_num)
+        # W2-8 身份外置：派卡时把 model/family/vendor 落 leases/<card>.json（agent 只读）
+        write_lease(card)
         print(f"  → Card #{num}: {card.get('id','?')} (O:{obj}, tier:{tier})")
         return num
     print(f"  ⚠ Card creation failed for {card.get('id','?')}: {p.stderr}")
@@ -548,12 +670,25 @@ def materialize_wave(cards, wave_meta):
     parent_num = create_parent_issue(wave_id, wave_title, wave_summary, milestone_num, len(cards), role="materializer")
 
     # 3. Create Card issues (batch — valve: only materializer does this)
+    #    事务化：带幂等键 CARD-<wave>-<idx>-<sha8> + upsert；已落盘的 key 不重复建（AC-1）。
     print(f"[3/4] Materializing {len(cards)} card(s)...")
     card_issues = []
     card_id_to_issue = {}
-    for card in cards:
+    completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    for idx, card in enumerate(cards):
+        key = _card_key(card, idx)
+        ledger = _load_ledger()
+        if key in ledger and ledger[key].get("issue"):
+            # upsert 幂等：已成功物化 → 复用已有 issue 号，不重复建
+            print(f"  → {card.get('id','?')}: idempotent, reuse issue #{ledger[key]['issue']}")
+            num = ledger[key]["issue"]
+            if num:
+                card_issues.append((card, num))
+                card_id_to_issue[card.get("id")] = num
+            continue
         num = create_card_issue(card, milestone_num, parent_num, role="materializer")
         if num:
+            _record_ledger(key, card.get("id"), num, completed_at)
             card_issues.append((card, num))
             card_id_to_issue[card.get("id")] = num
 

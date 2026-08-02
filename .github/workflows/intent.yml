@@ -1,0 +1,64 @@
+# intent — 单写者状态写通道（W2-2）
+#
+# 背景：loop 的状态权威在 `loop-state` 分支（CAS 保护，见 conductor/cas.py）。
+# 跨沙盒/跨身份的"状态写"必须收敛到唯一写者：CONDUCTOR_APP 或 CI 身份。
+# 本 workflow 是 AGENT（低权限 / 非写者）提交状态修改意图的唯一入口：
+#
+#   repository_dispatch (types: loop-intent) → CONDUCTOR_APP 身份 → 经 cas 写 → 回写结果
+#
+# 只有经过本通道、且由 CI 身份（GITHUB_TOKEN）承载的写才被允许把状态推进到
+# done / verified；agent 直接 gh issue edit 写这些状态会被纪律层拒绝（N19/N30）。
+#
+# 注意：AGENT_APP 身份直 push `loop-state` 也被同一条 branch ruleset 拒绝（N2 负证），
+# 这是分支保护层在 GitHub 侧保证，本 workflow 不重复实现 push——它只管发布意图的写入。
+
+name: intent
+
+on:
+  repository_dispatch:
+    types: [loop-intent]
+
+permissions:
+  contents: write          # 需要写 loop-state（经 conductor/cas.py 的 ref PATCH，fast-forward only）
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: intent-loop-state  # 全局唯一：单写者收敛
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    env:
+      LOOP_ORG: Cloudbird-Software
+      LOOP_REPO: loop
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: 应用意图（单写者 CAS 写 + 状态机合法性校验）
+        env:
+          INTENT_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util, os, json, sys
+          spec = importlib.util.spec_from_file_location("intent", "conductor/intent.py")
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+
+          payload = json.loads(os.environ.get("INTENT_PAYLOAD", "{}"))
+          identity = "ci" if os.environ.get("GITHUB_ACTIONS") else "unknown"
+
+          # 校验 + 写作唯一通道；done/verified 仅 CI 身份可写
+          ok = m.apply_intent(payload, identity=identity)
+          if not ok:
+              print("INTENT_REJECTED")
+              sys.exit(1)
+          print("INTENT_APPLIED")
+          PY
