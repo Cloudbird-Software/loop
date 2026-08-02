@@ -9,6 +9,21 @@ E 包高强度测试修复：环境变量缺失时 --help/--version 仍能工作
 import json, os, subprocess, threading, time, pathlib, fnmatch, hashlib, uuid, re, datetime, sys
 
 # ============================================================
+# W1-1：退出码常量 + 统一 JSON 输出口
+# ============================================================
+EXIT_OK = 0
+EXIT_REFUSED = 10
+EXIT_GATE = 11
+EXIT_UNKNOWN_VERB = 64
+EXIT_CRASH = 70
+EXIT_ENV = 78
+
+def _emit(obj, code=EXIT_OK):
+    """统一 JSON 输出唯一出口：print(json.dumps(...)) 并返回退出码。"""
+    print(json.dumps(obj, ensure_ascii=False))
+    return code
+
+# ============================================================
 # 全局常量（手册 5.1）—— 全部用 .get() 给默认值，--help 不崩
 # ============================================================
 def _env(): return os.environ
@@ -161,12 +176,39 @@ def render_card(it, blk):
 # ============================================================
 
 # ============================================================
+# 会话内最大可领卡数（产品策略 policy.yml + 环境变量）
+# ============================================================
+def _max_cards_per_session():
+    """会话内最多可领卡数。优先级：env LOOP_MAX_CARDS_PER_SESSION（合法正整数）
+    > policy.yml 的 execute.max_cards_per_session > 兜底 1。
+
+    policy.yml 只用标准库 re 解析（不 import yaml，loopd 运行环境不一定装 PyYAML）。
+    任何解析失败都返回兜底 1，绝不让失败覆盖 env 的有效值。
+    """
+    ev = E.get("LOOP_MAX_CARDS_PER_SESSION")
+    if ev:
+        try:
+            n = int(ev)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            pass
+    try:
+        txt = (CFG()["WS"] / "policy.yml").read_text()
+        m = re.search(r"max_cards_per_session\s*:\s*(\d+)", txt)
+        if m:
+            return max(1, int(m.group(1)))
+    except Exception:
+        pass
+    return 1
+
+# ============================================================
 # next：阻塞取卡 + CAS 领卡 + 路径租约（手册 5.3）
 # ============================================================
 @intent("next")
 def h_next(args):
     d = st()
-    if d["session_ordinal"] >= int(E.get("LOOP_MAX_CARDS_PER_SESSION", 1)):
+    if d["session_ordinal"] >= _max_cards_per_session():
         return {"stdout": "RETIRE\n"}
     deadline = time.time() + int(E.get("LOOP_NEXT_BLOCK_SEC", 60))
     while time.time() < deadline:
@@ -847,9 +889,14 @@ Verbs:
 禁止元字符：&& || ; | > >> < $() `` * ? ~
 """
 
+# W1-1：16 个已知动词（AC-2），供 help 输出、未知动词判定复用
+VERBS = ["next", "save", "verify", "done", "drop", "reset", "ask",
+         "evidence", "finding", "propose", "verdict", "upstream",
+         "retire", "status", "tick", "help"]
+
 @intent("help")
 def h_help(args):
-    return {"stdout": VERB_TABLE}
+    return {"verbs": VERBS, "count": len(VERBS)}
 
 # ============================================================
 # 心跳 + 自动落盘（手册 5.4）
@@ -950,22 +997,24 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] in HANDLERS:
-        CFG()  # Initialize proxies before dispatching
-        verb = sys.argv[1]
-        args = sys.argv[2:]
-        result = HANDLERS[verb](args)
-        if result:
-            if result.get("stdout"):
-                print(result["stdout"], end="", flush=True)
-            sys.exit(result.get("code", 0))
-        else:
-            sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
-        print(VERB_TABLE)
-        sys.exit(0)
-    elif len(sys.argv) > 1 and sys.argv[1] in ("--version", "-v"):
-        print("loopd v0.1.6")
-        sys.exit(0)
-    else:
+    _verb = sys.argv[1] if len(sys.argv) > 1 else None
+    if _verb is None:
+        # 无参数调用：进入守护进程主循环（行为不变）
         main()
+    elif _verb in ("--version", "-v"):
+        _emit({"ok": True, "version": "loopd v0.1.6"})
+        sys.exit(EXIT_OK)
+    elif _verb in HANDLERS or _verb in ("--help", "-h"):
+        _op = _verb if _verb in HANDLERS else "help"
+        CFG()  # Initialize proxies before dispatching
+        _result = HANDLERS[_op](sys.argv[2:])
+        if _op == "help" and isinstance(_result, dict) and "verbs" in _result:
+            _emit(_result)  # help 输出顶级 verbs 数组（AC-1/AC-2）
+        else:
+            _emit({"verb": _op, "result": _result})
+        _code = int(_result.get("code", 0)) if isinstance(_result, dict) else 0
+        sys.exit(EXIT_OK if _code == 0 else _code)
+    else:
+        # 未知动词 → UNKNOWN_VERB 且退出码 64（AC-3）
+        _emit({"error": "UNKNOWN_VERB", "verb": _verb})
+        sys.exit(EXIT_UNKNOWN_VERB)

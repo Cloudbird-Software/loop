@@ -1,0 +1,16 @@
+# rules/loop/mechanism-in-product.yml — 检测机制文件混入产品仓。
+# 动机：CHARTER N16 / N18：loop 的机制文件（gates/conductor/loopd/prompts/settings/
+# rules/lenses/pins）不得复制进产品仓（.loop 是唯一允许机制落地的挂载点）。
+# 本规则对产品类 import/引用 loop 机制实现、或在非受控目录直接依赖机制文件告警。
+rules:
+  - id: mechanism-in-product
+    languages: [python]
+    severity: ERROR
+    message: >-
+      产品仓代码直接 import/引用 loop 机制实现（gates/conductor/loopd 等）。
+      机制文件禁止复制进产品仓（CHARTER N16/N18），产品仓只能经 .loop 受控挂载点
+      消费，不得 copy/paste 机制实现。
+    patterns:
+      - pattern-either:
+          - pattern-regex: "(from|import)\\s+(loopd|conductor|gates\\.|loop\\.gates)"
+          - pattern-regex: "copy.*(loopd|conductor|prompts|settings|rules)"

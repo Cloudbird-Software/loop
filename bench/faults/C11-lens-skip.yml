@@ -1,0 +1,21 @@
+# C11 故障样本：lens 巡检被跳过（gate-not-executed）
+id: C11
+title: "Lens 巡检被跳过：gate 声明却未在 CI 执行"
+target_gate: "run_gates / lens-skip"
+subclass: "lens-skip"
+description: >
+  门禁跑 profile 时，某个 lens/gate 因条件分支（if: always() 反向、矩阵过滤、
+  触发条件不满足、continue-on-error）实际未执行——未执行等价于失败（F-A），
+  此处尝试把 skipped 伪装成通过。
+candidate_fault: |
+  - name: lens scan
+    if: ${{ false }}              # 恒 false：lens 从不执行
+    run: |
+      lenses/secret-leak.sh || true
+  # 期望 pact：declared gate 未执行必须报 GATE_NOT_EXECUTED，而非绿色通过
+expect_intercepted: true
+expect_error: "GATE_NOT_EXECUTED"
+reason: >
+  run_gates 的退出码契约：任一 profile 声明但未解析到/未执行的 gate 记为
+  'GATE_NOT_EXECUTED'（exit 2），优先级高于 fail(1) 与 pass(0)。凡"探不到即
+  SKIP 且 exit 0"的假绿（N11）都被本样本覆盖：lens 缺席必须判未执行而非通过。

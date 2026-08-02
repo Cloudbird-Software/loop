@@ -1,0 +1,20 @@
+# C05 故障样本：文档漂移（prompts 引用不存在的动词）
+id: C05
+title: "Doc drift：prompts 引用不存在的 loopd 动词"
+target_gate: "gate_doc_drift"
+subclass: "doc-drift"
+description: >
+  prompts/P-*.md / 操作手册中引用了 loopd VERB 表里不存在的动词（例如 relay、run、
+  filemode——这些已在 #52/#53 移除），文档与实际 CLI 契约漂移，误导 agent 调用
+  不存在的命令。
+candidate_fault: |
+  # prompts/P0.md 被篡改，引用已移除的通道
+  1. 执行 `loop relay 123`     # 未知动词，exit 64 UNKNOWN_VERB
+  2. 用 `loop filemode on` 开启文件通道   # 已被 #53 移除
+expect_intercepted: true
+expect_error: "reply"
+reason: >
+  loopd 固化 16 个已知动词（VERBS），未知动词 exit 64 并输出 UNKNOWN_VERB。
+  gate_doc_drift 扫描 prompts/** 提取 `loop <verb>` 引用，凡引用不在 loopd VERB 集
+  的动词即判红（drift），保证文档与 CLI 契约收敛、不诱导 agent 用错命令。
+  【W1 状态】该 gate 尚未落地，本卡以 corpus 方式登记，运行时拦截待实现后启用。

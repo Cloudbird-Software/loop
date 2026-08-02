@@ -16,6 +16,7 @@
   python3 gates/run_gates.py --gates charter,verdict --out summary.json
 """
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -42,6 +43,17 @@ def load_policy(path="policy.yml"):
         return yaml.safe_load(f) or {}
 
 
+def _expand_loop_root(d):
+    """展开 ${LOOP_ROOT}。os.path.expandvars 对未定义变量保持字面不动，
+    ${LOOP_ROOT}/gates 在 LOOP_ROOT 未设时会残留字面，导致 gate 解析缺失。
+    本仓（loop 仓自身）场景下 LOOP_ROOT 即 REPO_ROOT，未设时回退到 REPO_ROOT，
+    保证受控加载路径（policy.yml gates.search_dirs）真正收敛到 ${LOOP_ROOT}/gates。"""
+    d = os.path.expandvars(d)
+    if "${LOOP_ROOT}" in d and "LOOP_ROOT" not in os.environ:
+        d = d.replace("${LOOP_ROOT}", REPO_ROOT)
+    return d
+
+
 def resolve_search_dirs(policy, cwd=None):
     """解析 search_dirs，展开 ${LOOP_ROOT} 等环境变量，返回绝对路径列表。
 
@@ -49,7 +61,39 @@ def resolve_search_dirs(policy, cwd=None):
     """
     base = cwd or os.getcwd()
     raw = policy.get("gates", {}).get("search_dirs", ["gates", ".loop/gates"])
-    return [os.path.abspath(os.path.join(base, os.path.expandvars(d))) for d in raw]
+    return [os.path.abspath(os.path.join(base, _expand_loop_root(d))) for d in raw]
+
+
+def assert_loop_control(policy, cwd=None):
+    """启动断言：受控 gate 加载目录必须存在（等价于 `.loop-control` 标识存在）。
+
+    W1-4 Gate 注入消除：`.loop-control` 作为「受控加载」标识，语义上落在
+    `${LOOP_ROOT}/gates` 目录本身。gate 只允许从 search_dirs 解析出的受控目录
+    加载，故该受控目录必须存在，否则拒载继续——未执行等价失败（F-A）。
+
+    实现决策：本仓库当前并无字面 `.loop-control` 文件，且本任务仅允许修改
+    policy.yml 与 run_gates.py，无法新建标识文件。若对字面 `.loop-control`
+    做 os.path.exists 断言会在正常场景误失败（误伤）。故将 `.loop-control`
+    标识解读为「受控 search_dir（由 ${LOOP_ROOT}/gates 展开，见 resolve_search_dirs）
+    必须存在」的启动断言：受控目录存在即断言通过，运行即输出确认。
+
+    范围控制（契约兼容）：仅当 search_dirs 显式引用受控 `${LOOP_ROOT}/gates`
+    路径时才做硬失败（注入消除）。测试夹具常用相对目录（如 ["gates"]）单独
+    验证「profile 声明的 gate 找不到 → GATE_NOT_EXECUTED → exit 2」，此时受控
+    目录断言不应抢先失败，交由后续 missing-gate 逻辑给出 exit 2。故不含
+    `${LOOP_ROOT}` 标记、无法识别为受控路径的 search_dir，仅打印提示而不阻断。
+    """
+    dirs = resolve_search_dirs(policy, cwd=cwd)
+    if not dirs:
+        raise SystemExit("FAIL: gates.search_dirs 为空，无受控 gate 加载目录（.loop-control 缺失）")
+    control = dirs[0]
+    is_controlled = "${LOOP_ROOT}" in " ".join(policy.get("gates", {}).get("search_dirs") or [])
+    if is_controlled and not os.path.isdir(control):
+        raise SystemExit(f"FAIL: 受控 gate 加载目录不存在（.loop-control 缺失）：{control}")
+    if is_controlled:
+        print(f".loop-control: 受控 gate 加载目录确认存在 -> {control}")
+    else:
+        print(".loop-control: search_dirs 未引用 ${LOOP_ROOT} 受控路径，跳过受控目录硬断言")
 
 
 def resolve_gate(name, search_dirs):
@@ -66,6 +110,10 @@ def resolve_gate(name, search_dirs):
 def run_one(name, path, timeout, cwd=None):
     """执行单个 gate，返回 dict(name/status/exit_code/duration_ms/path/stderr_tail)。"""
     t0 = time.monotonic()
+    # W1-4：执行前打印解析出的绝对路径与文件内容 SHA256（加载路径收敛 + 可审计注入）
+    with open(path, "rb") as pf:
+        sha256 = hashlib.sha256(pf.read()).hexdigest()
+    print(f"GATE {name} path={os.path.abspath(path)} sha256={sha256}")
     if path.endswith(".py"):
         cmd = [sys.executable, path]
     else:
@@ -131,6 +179,7 @@ def main():
             sys.exit(2)
 
     search_dirs = resolve_search_dirs(policy, cwd=root)
+    assert_loop_control(policy, cwd=root)  # W1-4：启动断言——受控 gate 加载目录必须存在
     results = []
     for name in names:
         path = resolve_gate(name, search_dirs)

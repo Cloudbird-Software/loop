@@ -1,0 +1,19 @@
+# rules/loop/dispatcher-orphan.yml — 检测孤立 dispatcher 调度。
+# 动机：调度器（dispatcher/route_by_*）必须把每个任务的类别路由到已注册的路由表 /
+# 处理函数。若 dispatcher 直接调用、返回或引用一个不做实际路由分发（无 return 结果、
+# 空 body、返回值未消费、调不到已注册 handler）的"孤立"调度，则任务被丢弃造成
+# 孤儿调度。本规则对返回值未使用或形参未用于路由的 dispatcher 告警。
+rules:
+  - id: dispatcher-orphan
+    languages: [python]
+    severity: WARNING
+    message: >-
+      dispatcher 未产生有效路由结果（分派对 target 完全无引用，或没有 return 分发结果），
+      疑似孤立调度。请确保 dispatcher 返回可被排程子方消费的路由结果，避免任务被丢弃。
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $F($ARGS):
+                  ...
+          - pattern-regex: "^def (dispatch|dispatch_to|route|handler|schedule)\\("
+      - pattern-not-regex: "\\b(target|handler|route|queue)\\b"

@@ -1,0 +1,17 @@
+# C06 故障样本：CLI 契约违背（未知动词 exit 64）
+id: C06
+title: "loopd CLI 契约：未知动词应 exit 64 UNKNOWN_VERB"
+target_gate: "loopd"
+subclass: "cli-contract"
+description: >
+  agent（或畸形调用）向 loopd 传入未知动词（如 relay/run/filemode——已被移除），
+  期望 loopd 以文档化的退出码 64 拒绝，而不会静默成功或进入其它 handler。
+candidate_fault: |
+  $ python3 loopd/loopd.py relay 123
+  # 期望：{"error": "UNKNOWN_VERB", "verb": "relay"} 且 exit code = 64
+expect_intercepted: true
+expect_error: "UNKNOWN_VERB"
+reason: >
+  loopd 主分发：未知动词（不在 HANDLERS 且非 --help/--version）走 else 分支打印
+  {"error": "UNKNOWN_VERB", ...} 并 sys.exit(EXIT_UNKNOWN_VERB=64)。若该动词被
+  静默放行或误落到其它 handler（exit 0），即违约；本样本断言 exit 必须为 64。

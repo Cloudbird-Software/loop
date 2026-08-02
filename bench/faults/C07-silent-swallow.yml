@@ -1,0 +1,27 @@
+# C07 故障样本：静默吞退出码（set +e / || true）
+id: C07
+title: "Silent swallow：吞掉 gate 退出码造成假绿"
+target_gate: "gate_semgrep / silent-swallow"
+subclass: "silent-swallow"
+description: >
+  在 workflow / 脚本里用 `set +e`、`|| true`、`continue-on-error: true` 或把 gate
+  调用包进 `if :; then` 忽略非零退出码，令"未执行 / 失败"表现出成功——gate 实际未
+  拦截仍算绿（假绿），CHARTER N11 明令禁止。
+candidate_fault: |
+  - name: run gates
+    run: |
+      python3 gates/run_gates.py --profile default || true   # 吞掉 gate 失败退出码
+      set +e                                              # 关闭 errexit，之后失败不中断
+      exit 0
+  - name: worker.py
+    run: |
+      p = subprocess.run(["git", "commit", "-am", "x"], capture_output=True)   # 未校验 returncode
+      if p.returncode == 0:
+          print("ok")
+expect_intercepted: true
+expect_error: "silent-swallow"
+reason: >
+  semgrep 自研规则（silent-swallow 变体）对 `|| true` / `set +e` /
+  `continue-on-error` 等吞退出码写法判红；同系列 no-fake-green lens 亦命中。
+  gate 必须真实执行且非零即失败（F-A），本样本注入吞码写法应触发拦截。
+  【W1 状态】gate_semgrep 尚未落地，本卡以 corpus 方式登记，运行时拦截待实现后启用。

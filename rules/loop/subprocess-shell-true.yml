@@ -1,0 +1,16 @@
+# rules/loop/subprocess-shell-true.yml — 检测 subprocess shell=True 及 os.system。
+# 动机：shell=True 把外部输入拼进 shell，存在注入风险，且吞掉错误语义（配合
+# silent-swallow 构成假绿）。使用参数列表直投 execve，禁止 shell 助推。
+rules:
+  - id: subprocess-shell-true
+    languages: [python]
+    severity: WARNING
+    message: >-
+      subprocess 以 shell=True 执行（或使用了 os.system）。存在 shell 注入风险
+      且模糊了错误语义。请改为参数列表形式（不传 shell），由 execve 直接投递。
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run($ARGS, shell=True)
+          - pattern: subprocess.call($ARGS, shell=True)
+          - pattern: subprocess.Popen($ARGS, shell=True)
+          - pattern: os.system($CMD)

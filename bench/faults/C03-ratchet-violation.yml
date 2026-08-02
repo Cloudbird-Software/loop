@@ -1,0 +1,23 @@
+# C03 故障样本：棘轮倒转（门禁配置变宽松）
+id: C03
+title: "Ratchet 倒转：profile 丢掉已启用的 gate（配置变宽松）"
+target_gate: "gate_ratchet"
+subclass: "ratchet-violation"
+description: >
+  把 policy.yml 中某个 profile 的 gate 集合缩小（丢掉一个已启用 gate），令门禁集合
+  变宽松——等价于静默跳过该 gate（R10-3 / F-A 根因），绕过棘轮保护。
+candidate_fault: |
+  # 候选 policy.yml：default profile 从基线丢掉了 verdict（棘轮倒转）
+  gates:
+    profiles:
+      default:
+        - charter
+        # - verdict    <- 被删除：基线里的 gate 被偷偷移出集合
+        - paths
+expect_intercepted: true
+expect_error: "ratchet inversion detected"
+reason: >
+  gate_ratchet 把候选 policy（工作区）与基线（git merge-base 的 policy.yml，无 git
+  上下文回退自身为 no-op）比对；只要候选在某个 profile 内丢掉了任一新启用的 gate，
+  就打印 'FAIL: ratchet inversion detected (config loosened)' / "lost active gate"
+  并 exit 1。棘轮只允许变严格，禁止变宽松。

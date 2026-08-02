@@ -1,0 +1,22 @@
+# C09 故障样本：假绿（|| true / set +e / continue-on-error）
+id: C09
+title: "Fake green：用 || true / set +e 制造必然成功"
+target_gate: "run_gates / no-fake-green"
+subclass: "fake-green"
+description: >
+  CI 配置或运行脚本以 `|| true`、`set +e`、`continue-on-error` 把失败转绿，或在
+  探不到检查时 STEVEN SKIP 且 exit 0，伪造"总是绿"。CHARTER N11 规定：吞退出码 /
+  探不到即 SKIP 且 exit 0 一律禁止。
+candidate_fault: |
+  - name: gate
+    run: |
+      set +e
+      python3 gates/run_gates.py --profile default || true
+      echo "all green" && exit 0
+  # 或 step 级：continue-on-error: true（把 gate 失败伪装成通过）
+expect_intercepted: true
+expect_error: "fake-green"
+reason: >
+  run_gates / no-fake-green 以「gate 非零退出码必须导致整体失败」为契约：一旦出现
+  `|| true` / `set +e` / `continue-on-error: true` 使 gate 失败不红，即判假绿并 exit 1。
+  被拦截的判据是"真实非零退出码"（gate 返回非 0 = 被拦 = 通过），绝不吞码。

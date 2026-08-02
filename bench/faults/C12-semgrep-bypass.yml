@@ -1,0 +1,23 @@
+# C12 故障样本：绕过 semgrep 检测（disable rule / exclude）
+id: C12
+title: "Semgrep bypass：禁用规则 / 排除路径绕过扫描"
+target_gate: "gate_semgrep"
+subclass: "semgrep-bypass"
+description: >
+  通过 semgrep 配置把关键规则禁用（--disable-rule）、路径排除（--exclude /
+  path-ignore）、或 noise-profile 覆盖，使恶意代码（注入的 gate / 吞码 / 密钥）
+  绕过 semgrep 静态扫描。
+candidate_fault: |
+  # semgrep 配置被篡改：关掉全部自研安全规则并排除关键目录
+  rules:
+    - id: silent-swallow
+      disable: true              # 禁用吞退出码规则
+  # CLI 侧绕过：
+  #   semgrep --disable-rule silent-swallow --exclude gates/ --exclude policy.yml .
+expect_intercepted: true
+expect_error: "disable-rule"
+reason: >
+  gate_semgrep（W1 规划的 semgrep gate）对禁止规则禁用/路径排除的绕过写法判红；
+  也可由 rules/ 自研 semgrep 规则直接命中 'disable: true' / '--disable-rule'。
+  自我削弱扫描能力的配置 = 绕过检测，应 exit 1 被拦截。
+  【W1 状态】gate_semgrep 尚未落地，本卡以 corpus 方式登记，运行时拦截待实现后启用。
