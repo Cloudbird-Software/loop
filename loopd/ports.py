@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
@@ -15,23 +14,27 @@ from typing import Protocol, runtime_checkable
 class StateChainPort(Protocol):
     """状态真源读写端口（真实实现 = conductor.cas / loop-state 分支）。"""
 
-    def current_sha(self, ref: str = "heads/loop-state") -> str | None: ...
+    def current_sha(self, ref: str = "heads/loop-state") -> str | None:
+        raise NotImplementedError
 
-    def cas_update(self, base_sha: str, new_sha: str, force: bool = False) -> str: ...
+    def cas_update(self, base_sha: str, new_sha: str, force: bool = False) -> str:
+        raise NotImplementedError
 
 
 @runtime_checkable
 class GatePort(Protocol):
     """门禁端口：任一不满足即拒（fail-closed）。"""
 
-    def check(self, ctx: dict) -> bool: ...
+    def check(self, ctx: dict) -> bool:
+        raise NotImplementedError
 
 
 @runtime_checkable
 class MaterializerPort(Protocol):
     """物化器端口：幂等建卡/更新卡（CARD-<wave>-<idx>-<sha8> + upsert）。"""
 
-    def upsert(self, key: str, payload: dict) -> int: ...
+    def upsert(self, key: str, payload: dict) -> int:
+        raise NotImplementedError
 
 
 # 分层自检入口：证明 ports 层可作为协议的适配现场

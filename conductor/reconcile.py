@@ -36,8 +36,8 @@ def merged_to_done(merged_sha, deps, source="ci", apply=__import__(
     outcome = ReconcileOutcome()
     outcome.actions.append({"verb": "set_state", "card": None, "to": "done",
                             "merged_sha": merged_sha})
+    # 依赖解阻塞记录为 unblock action；目标卡实际置 ready 由这些 action 被消费时执行。
     for dep in deps or []:
-        apply(source, "blocked", "ready") if False else None  # noop，保持语义注释
         outcome.actions.append({"verb": "unblock", "dep": dep, "to": "ready"})
     return outcome
 

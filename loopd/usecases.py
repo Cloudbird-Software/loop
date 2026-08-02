@@ -16,9 +16,11 @@ class UsecaseResult:
 
 
 def claim_card_usecase(state_chain, card_blk):
-    """领卡用例：校验可领（角色匹配/无 block/路径不冲突）→ 经 domain 置 claimed→ 写链。
+    """领卡用例：校验可领（角色匹配/无 block/路径不冲突）→ 经 domain 置 claimed。
 
-    state_chain 为符合 loopd.ports.StateChainPort 的适配器。
+    本层只做编排：算目标状态与租约分支，不在此落盘。实际持久化由调用方把
+    结果交给 state_chain 适配器写链（单一事实源写入口）。不再声称"本层已写链"，
+    避免调用方误以为状态已持久化。
     """
     from loopd.domain import transitions as dom
     from loopd.domain.lease import Lease, branch_for
@@ -49,7 +51,8 @@ def _selfcheck():
     import ast as _ast
     # 显式用例存在，且分层纯编排（无 gh 调用）
     assert hasattr(claim_card_usecase, "__code__")
-    src = open(__file__).read()
+    with open(__file__, encoding="utf-8") as fh:
+        src = fh.read()
     calls = [n for n in _ast.walk(_ast.parse(src))
              if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) and n.func.id == "gh"]
     assert not calls, f"usecase layer must not contain gh calls, found {calls}"

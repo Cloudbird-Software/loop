@@ -22,7 +22,6 @@ import sys
 import os
 
 from conductor.state import (
-    WRITER_WHITELIST,
     build_block,
     compute_block_hash,
     rollback_to_last_valid,

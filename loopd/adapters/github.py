@@ -16,8 +16,16 @@ import json
 import os
 import subprocess
 
-# 状态真源分支（与 conductor/cas.py LOOP_STATE_BRANCH 对齐）
-LOOP_STATE_BRANCH = "loop-state"
+# 状态真源分支 ref（与 conductor/cas.py 一致，含 heads/ 前缀，用于 git refs PATCH 路径）
+LOOP_STATE_REF = "heads/loop-state"
+
+
+class CASConflict(Exception):
+    """CAS 冲突：ref 当前 sha 与调用方持有的 base_sha 不一致。
+
+    与 conductor/cas.py 的 CASConflict 语义一致：唯一出口是抛异常，
+    绝不悄悄覆盖；上层捕获后应重读最新 ref 并重试。
+    """
 
 
 def _gh(args, _stdin=None, token=None):
@@ -42,7 +50,7 @@ class GhStateChainPort:
         self.repo = repo or os.environ.get("LOOP_CAS_REPO", "Cloudbird-Software/loop")
         self.token = token or os.environ.get("GH_TOKEN")
 
-    def current_sha(self, ref="heads/loop-state"):
+    def current_sha(self, ref=LOOP_STATE_REF):
         code, out, _ = _gh([f"/repos/{self.repo}/git/ref/{ref}"], token=self.token)
         if code != 0 or not out.strip():
             return None
@@ -56,16 +64,24 @@ class GhStateChainPort:
             raise ValueError("refusing force=true: CAS must never silently overwrite")
         if not base_sha or not new_sha:
             raise ValueError("base_sha/new_sha are required")
+        # 写前先读当前 ref：不一致即 CASConflict（与 conductor/cas.py 同语义）。
+        cur = self.current_sha(ref=LOOP_STATE_REF)
+        if cur is not None and cur != base_sha:
+            raise CASConflict(
+                f"loop-state at {cur}, expected base {base_sha} — re-read then retry")
+        ref = LOOP_STATE_REF
         body = json.dumps({"sha": new_sha, "force": False})
         code, out, err = _gh(
             ["--method", "PATCH",
-             f"/repos/{self.repo}/git/refs/{LOOP_STATE_BRANCH}",
-             "--input", "-"],
+             f"/repos/{self.repo}/git/refs/{ref}"],
             _stdin=body, token=self.token,
         )
         if code == 0:
             return new_sha
-        raise RuntimeError(f"PATCH {LOOP_STATE_BRANCH} failed (exit={code}): {err or out}")
+        low = (err or out).lower()
+        if "422" in err or "422" in out or "fast forward" in low or "non-fast-forward" in low:
+            raise CASConflict(f"422 on PATCH {ref}: base moved concurrently, no write applied")
+        raise RuntimeError(f"PATCH {ref} failed (exit={code}): {err or out}")
 
 
 class GhGatePort:

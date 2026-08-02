@@ -177,7 +177,7 @@ def run_watchdog(stop_event, ttl_sec, expired_callback, poll_interval=0.25):
 
     Usable in tests/scripts that want the watchdog semantics without manual thread
     plumbing. Returns once ``stop_event`` is set; the callback fires from the watchdog
-    thread if the lease goes stale unsrenewed.
+    thread if the lease goes stale unrenewed.
     """
     wd = Watchdog(ttl_sec, expired_callback, poll_interval)
     wd.start()

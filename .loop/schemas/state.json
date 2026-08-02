@@ -18,8 +18,10 @@
     },
     "state": {
       "type": "string",
-      "enum": ["ready", "in_progress", "in_review", "done", "dropped", "blocked"],
-      "description": "卡片状态（YAML 状态机枚举）。"
+      "enum": ["ready", "claimed", "in_progress", "in_review", "done",
+               "closed", "respec", "stalled", "orphaned", "merged",
+               "abandoned", "verified"],
+      "description": "卡片状态（与 loopd.domain.transitions.STATES 对齐的单一事实源）。"
     },
     "lease_until": {
       "type": ["string", "null"],

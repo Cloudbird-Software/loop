@@ -136,16 +136,14 @@ def apply_intent(payload, identity="ci"):
     幂等 + 校验：card_id 必填、目标态合法、身份权责正确（done/verified 仅 ci）。
     合法且可写则落本地 CAS（模拟 cas_update 判定：能过校验即可写）。
     返回 True 表示可写/已认可；拒绝即抛 IntentError（由调用方取反成 INTENT_REJECTED）。
+
+    本层只做"判定 + 本地确认"（confirm_local）；真实持久化由 CI 身份经
+    intent.yml 调用别处落到 loop-state（单写者）。此处不伪装已写链。
     """
     _assert_intent_validated(payload)
     to_state = payload.get("to_state")
     _assert_writer_allowed(identity, to_state)
-    # 真实路径：经 conductor.cas.cas_update(...) 写 loop-state（单写者，force=false）
-    try:
-        from conductor.cas import cas_update  # lazy：避免 intent 导入即依赖 gh
-    except ImportError:
-        cas_update = None  # 无 CAS 环境（测试）→ 仅做判定，不真实写
-    # 本地可写判定：通过校验即视为允许（CAS 层会再做 ref force=false 的原子写）
+    # 本地可写判定：通过校验即视为允许（实际原子写由 CI 走 loop-state 层完成）
     confirm_local(payload.get("card_id"), to_state)
     return True
 

@@ -357,20 +357,25 @@ def _record_ledger(key, card_id, num, completed_at):
 
 
 def check_already_materialized(wave_id):
-    """Check if cards for this wave already exist (idempotency)."""
+    """Check if cards for this wave already exist (idempotency).
+
+    fail-closed：查询失败必须抛（绝不把错误当作"未物化"，否则会重复建 issue）。
+    唯一出口：返回 True/False。异常向上抛，由调用方/CI 判定失败。
+    """
     if not wave_id:
         return False
     p = gh("issue","list","-R",REPO,"--state","all","--limit","200",
            "--json","number,title,body","--search",f"in:body {wave_id}")
+    if p.returncode != 0:
+        raise RuntimeError(f"idempotency query failed (exit={p.returncode}): {p.stderr or p.stdout}")
     try:
         issues = json.loads(p.stdout or "[]")
-        for it in issues:
-            blk = extract_block(it.get("body",""))
-            if blk and blk.get("wave") == wave_id and blk.get("schema") == 1:
-                return True
-    except Exception:
-        # 反假绿：查询失败不当作"未物化"，返回 None 让调用方决定（fail-closed 由 main 判定）
-        return None
+    except ValueError as exc:
+        raise RuntimeError(f"idempotency query returned invalid JSON: {exc}") from exc
+    for it in issues:
+        blk = extract_block(it.get("body",""))
+        if blk and blk.get("wave") == wave_id and blk.get("schema") == 1:
+            return True
     return False
 
 
@@ -392,8 +397,15 @@ def extract_block(body):
 # ============================================================
 
 def _leases_dir():
-    """leases 目录（基于 LOOP_STATE / LOOP_ROOT 的 loop-state 布局，与 cas.LOOP_STATE_DIRS 对齐）。"""
-    base = E.get("LOOP_STATE") or E.get("LOOP_ROOT", "") or ".loop"
+    """leases 目录（基于 LOOP_STATE / LOOP_ROOT 的 loop-state 布局，与 cas.LOOP_STATE_DIRS 对齐）。
+
+    与 gates/gate_heterogeneity.py::_leases_dir 保持同一定义：LOOP_STATE 优先；
+    否则 LOOP_ROOT/.loop/leases；再否则 .loop/leases。写租约与读租约必须指向同一处。
+    """
+    base = E.get("LOOP_STATE")
+    if not base:
+        lr = E.get("LOOP_ROOT", "")
+        base = os.path.join(lr, ".loop") if lr else ".loop"
     return pathlib.Path(base) / "leases"
 
 

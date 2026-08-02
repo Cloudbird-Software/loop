@@ -3,7 +3,8 @@
 
 Epoch fencing gate (W2-3):
   1. The card claims a lease whose ``epoch`` should equal ``attempt``.
-  2. The working branch MUST follow the pattern ``card/<id>/e<epoch>``.
+  2. The working branch MUST follow the pattern ``<card_id>/e<epoch>``
+     (loopd.domain.lease.branch_for), i.e. a ``/e<epoch>`` suffix.
   3. If the PR head branch's epoch != the card's expected epoch, the gate FAILs
      (exit 1) to prevent a stale/incorrect epoch claim from landing. When
      ``--close-on-fail`` is given it also auto-closes the PR via ``gh pr close``
