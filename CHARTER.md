@@ -129,6 +129,38 @@
 
 ---
 
+## G6: 成熟度阶梯
+
+> 链路成熟度 = 机器可查的运行证据，不是代码存在性。只有达到 OBSERVED 及以上的链路才允许被其他链路依赖。
+
+### Needs
+
+- N36.1: 链路成熟度标签必须由机器证据支撑（run id / URL / sha256），不由声明决定
+- N36.2: 标签升级由 `gate_maturity_evidence` 强制；无 run 证据不得升级
+- N36.3: 只有 OBSERVED 及以上的链路可被其他链路依赖
+
+### Quantitative metrics
+
+- Q6.1: 可被依赖的链路中，100% 达到 OBSERVED 及以上且有对应 run id
+
+---
+
+## G7: 卡 provenance
+
+> 卡必须由系统身份创建，无卡 PR 只能触碰白名单琐碎路径。杜绝"人直建 issue 绕过机制"。
+
+### Needs
+
+- N37.1: 卡 issue 必须由 App 身份（CONDUCTOR_APP / materializer bot）创建
+- N37.2: 无 `Card: #NNN` 的 PR 仅允许白名单琐碎路径（docs/assets/README），其余 fail-closed
+- N37.3: 无卡代码 PR 物理不可合并
+
+### Quantitative metrics
+
+- Q7.1: 无卡改 `src/**` 的 PR 100% 被拦（fail-closed）
+
+---
+
 ## Never Doing（N 段：绝不做）
 
 - N3: 不让任何开源件接管跨卡调度
@@ -141,6 +173,29 @@
 - N13: 不把模型的论断当作事实——不可证伪的一律拒收，未被独立复现的不得触发任何代码改动
 - N14: 不在产品仓复制 loop 的机制文件（gates/lenses/conductor/loopd/prompts/settings）
 - N15: 不把高权限凭证放进仓库级 secret——能用 GITHUB_TOKEN 的绝不用 PAT，能用 App 的绝不用 PAT
+
+### 宪法层增补（W1-7 立法，手册附录 A 权威）
+
+- N16: 产品仓 PR 不得修改 `.github/**`、`LOOP.yml`、`CODEOWNERS`、`contracts/**`、`db/migrations/**`、`.loop/**`、`flags.yml`、`exceptions.yml`、`UPSTREAM.yaml`
+- N17: 凡跑在 agent 沙盒内的检查，必须有不依赖 agent 输入的 CI 孪生检查；沙盒内的那份只用于快速失败，不用于授权；孪生检查必须 fail-closed
+- N18: 棘轮条款：所有阈值、required check 集合、评审数只能单向收紧
+- N19: 判断型验证（LLM 评审）只有否决权，没有通过权；`done/verified` 只能由 CI 身份写入
+- N20: 波次是规划标签，不是分支实体；禁止 `wave/*` 长命分支；PR 存活以小时计
+- N21: 卡片 diff 上限按 tier 硬性执行，超限必须拆卡；本条款不设 EXC 通道
+- N22: 测试的编写者与实现的编写者必须是不同 agent、不同 vendor；实现方对 `tests/**` 与 `holdout/**` 无写权限；holdout 对实现方不可见
+- N23: 深层集成失败的默认动作是丢弃重做（respec），不是派 agent 去修
+- N24: 禁止摆设门禁：任何 30 天零拦截的门禁必须被红队证明有效，否则删除
+- N25: 不可逆动作（数据迁移、真实付款、对外发信、删除数据）必须人类批准
+- N26: 所有例外必须具名、有 TTL（≤90 天）、有人类署名、有 ADR
+- N27: 成本与用量数据不采信 agent 自述，只采信 gateway receipt
+- N28: 诚实条款：链路成熟度标签必须有机器可查的证据支撑（run id/URL/sha256）；标签升级由 `gate_maturity_evidence` 强制
+- N29: 双证条款：任何"完工/通过/有效"的声明必须同时提供正向证据与至少一条负向证据（该拦的被拦了）；只有正向证据的声明不予受理
+- N30: 单一写者条款：状态权威只有一个写入身份（CONDUCTOR_APP）；任何其他身份写出的状态变更一律视为篡改并 quarantine
+- N31: 持久化条款：任何需要跨运行累积的状态必须落在 loop-state 分支；禁止写入 `.gitignore` 覆盖的路径（`gate_persistence` 强制）
+- N32: 第三方规则集许可证约束：Semgrep 官方规则不得 vendored 进可公开仓
+- N33: 元层不可自证：`META_MUTABLE_PATHS` 白名单结构性排除一切评价器（`run_gates.py`、`bench/**`、`rubrics/**`、`holdout/**`、`policy.yml` 评分字段、`exceptions.yml`）
+- N34: 评估三分与防污染：search/validation/holdout 三分，holdout 哈希封存；bench 内容出现在 `prompts/**`、`skills/**`、代码注释中 = eval-leak 红
+- N35: 概念漂移看门狗：bench 指标涨而线上真实卡通过率不涨且超阈值 → Incident
 
 ---
 
@@ -159,20 +214,47 @@ G2 product-x 样板可复用性
 G3 可信度地基：零假绿、门禁真实、控制面自过门禁
 G4 强模型验收环：可证伪断言 + 独立复现 + 固化为检查器
 G5 产品仓持续对齐
+G6 成熟度阶梯：只有 OBSERVED 及以上的链可被依赖
+G7 卡 provenance：卡必须由 App 身份创建，无卡 PR 白名单制
 N3 不让开源件接管跨卡调度
 N4 不做无外部可观测收益的重构
 N5 不自动修正 ruleset
 N6 不从非官方源安装依赖
 N7 不在样板里塞真实产品逻辑
+<!-- 注：N8/N9/N10 无顶级"No Never Doing"条目——它们是 G3/G4/G5 目标段下的
+     子条款前缀（N8.* / N9.* / N10.*，如 N8.1-N8.6、N9.1-N9.7、N10.1-N10.5）。
+     编号从 N1.x 起每目标段内部连续；顶级连续从 N11 开始。 -->
 N11 不把假绿当作权宜之计
 N12 不允许实现方自证
 N13 不把模型的论断当作事实
 N14 不在产品仓复制 loop 机制文件
 N15 不把高权限凭证放进仓库级 secret
+N16 产品仓禁改机制/契约/门禁路径
+N17 沙盒检查必有 CI 孪生且孪生 fail-closed
+N18 棘轮：阈值/required check/评审数只许收紧
+N19 判断型验证只有否决权，done/verified 仅 CI 身份可写
+N20 波次是标签非分支，禁止 wave/* 长命分支
+N21 卡 diff 上限按 tier 硬性执行且不设 EXC
+N22 测试与实现异 agent 异 vendor，实现方对 tests/holdout 无写权
+N23 深层失败默认 respec
+N24 禁止摆设门禁：30 天零拦截须红队证明否则删除
+N25 不可逆动作必须人类批准
+N26 例外具名+TTL+人类署名+ADR
+N27 成本只采信 gateway receipt
+N28 诚实条款：成熟度标签须机器证据支撑
+N29 双证：完工声明须正证+负证
+N30 单一写者：状态权威仅 CONDUCTOR_APP，他写即篡改
+N31 持久化：跨运行状态落 loop-state，禁写 gitignored 路径
+N32 第三方规则集不得 vendored 进公开仓
+N33 元层不可自证：评价器结构性排除于可写面
+N34 评估三分与防污染：holdout 哈希封存，eval-leak 红
+N35 概念漂移看门狗：bench 涨线上不涨超阈 → Incident
 Q0 闭环成功率与领卡时延
 Q1 自治自愈时延
 Q2 样板 fork 后改动点 ≤5
 Q3 可信度：假绿为零且门禁有负向测试
 Q4 强模型验收：claim 必先被复现
 Q5 产品仓对齐：pin 新鲜且机制副本为零
+Q6 成熟度阶梯：只有 OBSERVED 及以上的链可被依赖（子项 Q6.1）
+Q7 卡 provenance：无卡改 src/** 的 PR 100% 被拦（子项 Q7.1）
 
