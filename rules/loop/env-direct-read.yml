@@ -1,0 +1,18 @@
+# rules/loop/env-direct-read.yml — 检测对进程环境变量的直接读取。
+# 动机：直接 os.environ / os.getenv 绕过统一的环境变量清单（docs/环境变量清单.md）
+# 之上层封装，敏感凭证缺少来源收敛审计。本规则对直接读环境变量的写法告警。
+rules:
+  - id: env-direct-read
+    languages: [python]
+    severity: WARNING
+    message: >-
+      直接读取环境变量（os.environ / os.getenv）。请通过统一的环境变量清单与
+      凭证抽象读取，避免敏感环境变量被绕过审计直接消费。
+    patterns:
+      - pattern-either:
+          - pattern: os.getenv($NAME)
+          - pattern: os.environ.get($NAME)
+          - pattern: os.environ[$NAME]
+      - pattern-not-inside: |
+          def _load_env($NAME):
+              ...

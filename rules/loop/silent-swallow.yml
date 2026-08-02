@@ -1,0 +1,18 @@
+# rules/loop/silent-swallow.yml — 检测 subprocess 调用未校验 returncode。
+# 动机：`subprocess.run(cmd, shell=True)` 且不带 check 会静默吞掉被调进程的退出码，
+# 属于 CHARTER/R10 语境下的"吞退出码"假绿风险（fake-green，N11）。
+# 本规则对未显式传入 `check=`（或显式 check=False）的子进程调用告警。
+rules:
+  - id: silent-swallow
+    languages: [python]
+    severity: WARNING
+    message: >-
+      subprocess 调用（run/call/Popen）未校验 returncode（未传 check= 或
+      check=False），可能静默吞掉被调进程的退出码，构成假绿风险。请使用
+      check=True 或显式检查 retcode，避免吞退出码。
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run($ARGS)
+          - pattern: subprocess.call($ARGS)
+          - pattern: subprocess.Popen($ARGS)
+      - pattern-not-regex: "check\\s*=\\s*(True|1)"

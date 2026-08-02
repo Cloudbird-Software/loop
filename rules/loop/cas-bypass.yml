@@ -1,0 +1,14 @@
+# rules/loop/cas-bypass.yml — 检测绕过 CAS 的状态写操作。
+# 动机：卡片/状态等受控状态机（loopd CAS，含 --force / update-ref / reset --hard /
+# 直接写状态文件）只能走受控通道推进。强制 push、reset --hard、checkout -f、
+# update-ref 等属于绕过 CAS 的破坏性写操作，本规则对这些传染写法告警。
+rules:
+  - id: cas-bypass
+    languages: [python]
+    severity: ERROR
+    message: >-
+      检测到疑似绕过 CAS 的状态写操作（强制 push / hard reset / force checkout /
+      update-ref）。受控状态（cards、WAVE 卡块、state 文件）只能经 loopd 受控通道
+      推进，禁止直接强写绕过审计与 CAS。
+    patterns:
+      - pattern-regex: "(git\\s+(push|update-ref|checkout|reset).*?(--force|-f\\b|--hard))"

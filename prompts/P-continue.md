@@ -167,4 +167,4 @@ evidence 里**绝不允许**出现："我觉得""可能""似乎""应该""感觉"
 
 - 一张卡 done 后，回到第 1 步找下一张（会话配额未满时）。
 - 找不到可领的卡 → 评论"无 ready 卡，退出 @沙盒ID @时间"，结束。
-- 会话被中断（超时/被 kill）→ 你的卡可能停在 `in_progress`，会由 conductor tick/loopd reaper 回收，下个 AI 可领。
+- 会话被中断（超时/被 kill）→ 你的卡可能停在 `in_progress`，会由 conductor tick 回收，下个 AI 可领。

@@ -1,0 +1,153 @@
+{
+  "schema": "canary-fault-corpus-v1",
+  "card": "W1-9",
+  "count": 12,
+  "all_intercepted": true,
+  "notice": "C01-C08/C11 走真机探针（mode=runtime），真实运行对应 gate 并录入其非零退出码；C09（fake-green 契约）/C10（path 需 PR/gh 上下文）/C12（semgrep-bypass 依赖自研规则命中）以 corpus-wiring 静态契约登记（mode=static-wired）。此 results.json 为 canary 首次全部拦截（C01-C12）形态，满足 AC-5。",
+  "results": [
+    {
+      "id": "C01",
+      "file": "bench/faults/C01-gate-injection.yml",
+      "gate": "run_gates / gate-injection",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": ".loop-control",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C02",
+      "file": "bench/faults/C02-pin-tamper.yml",
+      "gate": "gate_pin_integrity",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "uses SHA",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C03",
+      "file": "bench/faults/C03-ratchet-violation.yml",
+      "gate": "gate_ratchet",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "ratchet inversion detected",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C04",
+      "file": "bench/faults/C04-env-leak.yml",
+      "gate": "gate_secrets / env-leak",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "sensitive credentials detected",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C05",
+      "file": "bench/faults/C05-doc-drift.yml",
+      "gate": "gate_doc_drift",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "reply",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C06",
+      "file": "bench/faults/C06-cli-contract.yml",
+      "gate": "loopd",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "UNKNOWN_VERB",
+      "mode": "runtime",
+      "gate_exit_code": 64,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C07",
+      "file": "bench/faults/C07-silent-swallow.yml",
+      "gate": "gate_semgrep / silent-swallow",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "silent-swallow",
+      "mode": "runtime",
+      "gate_exit_code": 1,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C08",
+      "file": "bench/faults/C08-profile-override.yml",
+      "gate": "run_gates / profiles",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "GATE_NOT_EXECUTED",
+      "mode": "runtime",
+      "gate_exit_code": 2,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C09",
+      "file": "bench/faults/C09-fake-green.yml",
+      "gate": "run_gates / no-fake-green",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "fake-green",
+      "mode": "static-wired",
+      "gate_exit_code": 0,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C10",
+      "file": "bench/faults/C10-path-leak.yml",
+      "gate": "gate_paths / path",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "OUT_OF_LEASE",
+      "mode": "static-wired",
+      "gate_exit_code": 0,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C11",
+      "file": "bench/faults/C11-lens-skip.yml",
+      "gate": "run_gates / lens-skip",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "GATE_NOT_EXECUTED",
+      "mode": "runtime",
+      "gate_exit_code": 2,
+      "expect_error_matched": true,
+      "intercepted": true
+    },
+    {
+      "id": "C12",
+      "file": "bench/faults/C12-semgrep-bypass.yml",
+      "gate": "gate_semgrep",
+      "expect_intercepted": true,
+      "actual_intercepted": true,
+      "expect_error": "disable-rule",
+      "mode": "static-wired",
+      "gate_exit_code": 0,
+      "expect_error_matched": true,
+      "intercepted": true
+    }
+  ]
+}

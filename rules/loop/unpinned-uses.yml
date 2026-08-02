@@ -1,0 +1,15 @@
+# rules/loop/unpinned-uses.yml — 检测 GitHub Actions uses: 引用未 pin 到 SHA。
+# 动机：供应链安全（CHARTER N16）。actions 的 uses 若指向可变 tag（@main/@v4 等）
+# 或未 pin 到提交 SHA，存在被变动/投毒的供应链风险。本规则对非 40 位 hex-SHA 的
+# uses 引用告警。
+rules:
+  - id: unpinned-uses
+    languages: [yaml]
+    severity: ERROR
+    message: >-
+      GitHub Actions uses: 引用未 pin 到提交 SHA。请将 uses 固定到 40 位
+      完整 commit SHA（而非 @main/@vN 等可变引用），并在注释记录来源与升级说明。
+    patterns:
+      - pattern: "$KEY: $VAL"
+      - pattern-regex: "^\\s*uses:\\s+.+"
+      - pattern-not-regex: "@[0-9a-f]{40}"

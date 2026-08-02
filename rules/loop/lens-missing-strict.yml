@@ -1,0 +1,20 @@
+# rules/loop/lens-missing-strict.yml — 检测 lens 缺少 strict 模式。
+# 动机：lens 巡检检查器必须声明 strict 严格模式（在可复现输入下对 SPAN 归并/断言在
+# 全宽路径收敛），否则产出会放射到不可控范围。若 lens 定义却缺失 strict/mode=strict/
+# strict: true 之类序列化，提示补齐。
+rules:
+  - id: lens-missing-strict
+    languages: [python]
+    severity: WARNING
+    message: >-
+      lens 定义未声明 strict（严格）模式。lens 检查器应显式置为
+      strict/mode=strict/strict: True，以便在可复现输入下收敛断言范围。
+    paths:
+      include:
+        - lenses/*.py
+    patterns:
+      - pattern: |
+          def $F($ARGS):
+              ...
+      - pattern-regex: "class\\s+\\w+Lens\\("
+      - pattern-not-regex: "strict"

@@ -1,0 +1,24 @@
+# rules/loop/nondeterminism-in-conductor.yml — 检测 conductor 中的非确定性来源。
+# 动机：conductor/* 是承重调度逻辑，时间戳/随机数/std::time.now() 直接取值、
+# 或对 dict 的无序迭代会让同一输入产生不同行为，破坏可复现性（CHARTER N13 证据链）。
+# 本规则仅对 conductor 目录内的这类写法告警（path 限定，避免误伤测试夹具）。
+rules:
+  - id: nondeterminism-in-conductor
+    languages: [python]
+    severity: WARNING
+    message: >-
+      conductor 中使用了非确定性来源（time/datetime 直接读取、random 抽样、
+      uuid4 等）。此类取值会使同输入产生不同行为，破坏可复现性。请将时间/随机源
+      注入化或改为确定性的 set 排序迭代。
+    paths:
+      include:
+        - conductor/*
+    patterns:
+      - pattern-either:
+          - pattern: time.time()
+          - pattern: datetime.now()
+          - pattern-regex: "random\\.(uniform|randint|choice|random|sample)\\("
+          - pattern-regex: "(set\\(|\\{[^:}]*\\))"
+      - pattern-not-inside: |
+          def _now():
+              ...

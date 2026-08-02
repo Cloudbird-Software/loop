@@ -1,0 +1,19 @@
+# C08 故障样本：profile 集合被覆盖变宽松（绕过 run_gates）
+id: C08
+title: "Profile 覆盖：default 集合被替换为缺 gate 的更小集合"
+target_gate: "run_gates / profiles"
+subclass: "profile-override"
+description: >
+  通过 --profile / --gates 覆盖或篡改 policy.yml 的 profiles，让 run_gates 实际只跑
+  一个比 leader 契约更小的 gate 集合，令缺失的 gate 不执行（GATE_NOT_EXECUTED）——
+  等价于 scope 缩小绕过门禁。
+candidate_fault: |
+  # 用 --gates 只跑一个不存在的 gate，期望解析为 GATE_NOT_EXECUTED
+  python3 gates/run_gates.py --gates charter,ratchet,secrets
+  # 其中 secrets gate 缺失且 profile 被覆盖为不含 ratchet/pin_integrity 的集合
+expect_intercepted: true
+expect_error: "GATE_NOT_EXECUTED"
+reason: >
+  run_gates 对 profile 声明了但任何受控 search_dir 都找不到的 gate 记为
+  'GATE_NOT_EXECUTED'（exit 2），未执行等价失败（F-A）。本样本论证：profile 被
+  覆盖变小 / 引用了缺失 gate 时，run_gates 必须报告 GATE_NOT_EXECUTED 而非静默跳过。

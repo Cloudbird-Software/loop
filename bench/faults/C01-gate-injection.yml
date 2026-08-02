@@ -1,0 +1,27 @@
+# C01 故障样本：Gate 注入（search_dirs 注入假 gate）
+id: C01
+title: "Gate 通过 search_dirs 注入假 gate（绕过受控加载）"
+target_gate: "run_gates / gate-injection"
+subclass: "gate-injection"
+description: >
+  攻击者修改 policy.yml 的 gates.search_dirs，追加一个指向攻击者可控目录的
+  search_dir，并在其中放置名如 gate_secrets.py / gate_ratchet.py 的假 gate，
+  使 run_gates 从非受控路径解析并执行，从而替换/绕过真实 gate。
+candidate_fault: |
+  # policy.yml 被篡改：search_dirs 追加了攻击者可控目录
+  gates:
+    search_dirs:
+      - ${LOOP_ROOT}/gates
+      - /home/attacker/evil_gates        # 注入点：非受控目录被纳入 gate 解析
+    profiles:
+      default:
+        - charter
+        - verdict
+        - evil_gate                     # 指向 attacker 目录里的假 gate
+expect_intercepted: true
+expect_error: ".loop-control"
+reason: >
+  受控 gate 加载目录（第一个受控 search_dir）必须存在，且 gate 只能从 search_dirs
+  解析出的受控目录加载（W1-4 启动断言 assert_loop_control / resolve_gate）。注入的
+  假 gate 要么触发 ".loop-control 缺失 / 受控目录不存在"，要么解析为不在受控目录的
+  文件而判 GATE_NOT_EXECUTED。run_gates 对 gate 实际执行路径做 SHA 打印，注入必留痕并被拦截。

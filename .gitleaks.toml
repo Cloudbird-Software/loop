@@ -1,0 +1,30 @@
+# gitleaks 扫描配置（W1-5 gates/gate_secrets.py 调用）。
+# 定义 gitleaks 扫描规则：含 GitHub PAT（ghp_/gho_等等）与 AWS 访问密钥等。
+# 本配置仅驱动 gitleaks 路径；gates/gate_secrets.py 内置正则兜底（fail-closed）。
+
+title = "loop 控制面 gitleaks 扫描规则"
+
+[extend]
+# 从 gitleaks 官方默认规则继承，避免重复定义维护分裂。
+useDefault = true
+
+[[rules]]
+id = "loop-github-pat"
+description = "GitHub Personal Access Token (classic / oauth 等前缀)"
+regex = '''(?:ghp_|gho_|ghu_|ghs_|ghr_)[a-zA-Z0-9]{36}'''
+keywords = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
+
+[[rules]]
+id = "loop-github-finngrained-pat"
+description = "GitHub fine-grained Personal Access Token"
+regex = '''github_pat_[a-zA-Z0-9_]{81}'''
+keywords = ["github_pat_"]
+
+[[rules]]
+id = "loop-aws-access-key"
+description = "AWS Access Key ID (AKIA...)"
+regex = '''AKIA[0-9A-Z]{16}'''
+keywords = ["AKIA"]
+
+[allowlist]
+paths = ["\\.git/"]

@@ -1,0 +1,20 @@
+# C02 故障样本：供应链 pin 篡改（uses SHA 与 loop-sha 不一致）
+id: C02
+title: "Workflow pin 篡改：uses SHA 与 with.loop-sha 不一致"
+target_gate: "gate_pin_integrity"
+subclass: "pin-tamper"
+description: >
+  在 .github/workflows/*.yml 的 step 中，把 uses: 引用的 40 位 SHA pin 换成另一个
+  SHA（指向伪造/非祖先提交），与 step 内 with.loop-sha 指向的 SHA 不一致，
+  意图在供应链链路上替换为恶意 pin。
+candidate_fault: |
+  - name: run gates
+    uses: actions/setup-python@1111111111111111111111111111111111111111   # 伪造 pin
+    with:
+      loop-sha: "2222222222222222222222222222222222222222"                 # 与 uses 不一致
+expect_intercepted: true
+expect_error: "uses SHA"
+reason: >
+  gate_pin_integrity 对每个 step 校验「uses 的 40 位 SHA」与「with.loop-sha」必须一致
+  （check_sha_vs_loop_sha 失败打印 'FAIL: uses SHA <a> != with.loop-sha <b>'），且
+  loop-sha 必须是当前 HEAD 的祖先（is_ancestor）。两处不一致或非祖先 pin 均 exit 1 被拦截。

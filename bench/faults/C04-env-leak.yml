@@ -1,0 +1,22 @@
+# C04 故障样本：密钥经 env/日志泄漏（GH_TOKEN）
+id: C04
+title: "Secret 泄漏：GH_TOKEN 被写入 env/日志输出"
+target_gate: "gate_secrets / env-leak"
+subclass: "env-leak"
+description: >
+  在 workflow 的 run 步骤或代码里把高权限 token（GH_TOKEN / GITHUB_TOKEN）直接
+  写入环境变量、日志或产物，导致凭证外泄到 CI 输出。gate_secrets（W1 规划的
+  secrets gate，env-leak 变体）依 CHARTER N15 应拦截「高权限 token 的明文使用/回显」。
+candidate_fault: |
+  - name: debug
+    run: |
+      echo "token=$GH_TOKEN"          # 把 GH_TOKEN 明文写进日志
+      env | grep -i token             # 枚举环境变量中的密钥并回显
+expect_intercepted: true
+expect_error: "sensitive credentials detected"
+reason: >
+  目标 gate_secrets（env-leak）对任何把含 GH_TOKEN/GITHUB_TOKEN 的 secret 写进
+  stdout/stderr/env 回显的行为判红（exit 1）。样本注入的 run 步骤明文回显 token，
+  属可被 secrets gate 以 'GH_TOKEN' / 'secret' 子串命中的故障。
+  【W1 状态】该 gate 尚未落地（policy.yml 注释待实现），本样本在本卡以 corpus 方式
+  登记并由 canary 静态契约校验，运行时拦截待 gate 实现后启用。
