@@ -6,7 +6,7 @@
     可直接走本地 CAS，避免每次都绕 GitHub Actions 一次网络往返。
   - 正规路径（跨身份 / 终态）必须经 intent：把意图提交到 repository_dispatch，
     由 CONDUCTOR_APP/CI 身份经 cas 写入后再轮询结果（N19/N30）。
-  - 只读校验器 ``apply_intent``：校验意图合法（whitelist writer、done/verified 仅 CI
+  - 只读校验器 ``apply_intent``：校验意图合法（card_id/目标态合法、done/verified 仅 CI
     身份可写），合法则落本地 CAS——这正是 intent.yml workflow 调用的同一入口。
 
 核心理念（N19/N30）：AGENT 永远没有能力把状态推到 done/verified；它只能提交意图，
@@ -28,8 +28,7 @@ CI_ONLY_STATES = {"done", "verified"}
 # 允许 agent（低权限）经本地 CAS 快速写的前几步状态
 AGENT_WRITABLE_PREFIX = {"ready", "claimed", "in_progress"}
 
-# 合法 writer 白名单（与 conductor/state.py WRITER_WHITELIST 同源）
-WRITER_WHITELIST = {"loopd", "conductor", "human-ops"}
+# writer 白名单的真正权威在 conductor/state.py（integrity.writer 校验），无需在此重复定义。
 
 # intent 提交后轮询上限（秒），防止挂死
 _POLL_TIMEOUT = int(E.get("LOOP_INTENT_POLL_SEC", 300))

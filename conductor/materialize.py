@@ -323,9 +323,13 @@ def auto_tier(card):
 # 或已成功落盘的卡——都不重复物化（AC-1）。
 def _card_key(card, idx):
     wave = card.get("wave", "WAVE-UNKNOWN")
-    # _source 形如 "waves/WAVE-02.md"，取其 sha8 作为内容指纹的一部分
-    src = card.get("_source", "") or ""
-    hash8 = hashlib.sha256(src.encode()).hexdigest()[:8]
+    # 内容指纹取卡片"内容"字段（排除动态注入的 _source 文件路径 / _wave 等），
+    # 使同文件内卡内容改动也能改变幂等键，避免误复用旧台账。
+    content = {k: v for k, v in card.items()
+               if not k.startswith("_") and k != "wave"}
+    hash8 = hashlib.sha256(
+        json.dumps(content, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:8]
     return f"CARD-{wave}-{idx}-{hash8}"
 
 

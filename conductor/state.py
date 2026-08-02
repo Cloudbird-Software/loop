@@ -27,7 +27,7 @@ GENESIS_PREV = ""
 
 
 def canonical_json(obj):
-    """对象 -> 确定性正规化 JSON 字节串（key 排序、紧凑分隔、保留非 ASCII）。"""
+    """对象 -> 确定性正规化 JSON 字符串（key 排序、紧凑分隔、保留非 ASCII）。"""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 

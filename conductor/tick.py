@@ -1116,6 +1116,7 @@ def run_step(step):
         step.fn()
         step.status = "ok"
         step.last_success_at = time.time()
+        step.last_error = None  # 成功后清除历史错误，避免监督摘要误报旧失败
     except _StepTimeoutError:
         step.status = "timed_out"
         step.last_error = f"step {step.name} timed out after {step.timeout_sec}s"

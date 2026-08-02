@@ -99,7 +99,6 @@ def cas_update(owner_repo, base_sha, new_sha, ref="heads/loop-state",
         [
             "--method", "PATCH",
             f"/repos/{owner_repo}/git/refs/{ref}",
-            "--input", "-",
         ],
         token=token, _stdin=body,
     )
@@ -126,14 +125,14 @@ def _create_commit(owner_repo, parent_sha, message, path, content, token=None):
         "base_tree": parent_tree,
         "tree": [{"path": path, "mode": "100644", "type": "blob", "content": content}],
     }
-    code, out, _ = _gh(["--method", "POST", f"https://api.github.com/repos/{owner_repo}/git/trees",
-                        "--input", "-"], token=token, _stdin=json.dumps(tree))
+    code, out, _ = _gh(["--method", "POST", f"https://api.github.com/repos/{owner_repo}/git/trees"],
+                        token=token, _stdin=json.dumps(tree))
     if code != 0 or not out.strip():
         raise RuntimeError(f"create tree failed (exit={code})")
     tree_sha = json.loads(out)["sha"]
     cmt = {"message": message, "tree": tree_sha, "parents": [parent_sha]}
-    code, out, _ = _gh(["--method", "POST", f"https://api.github.com/repos/{owner_repo}/git/commits",
-                        "--input", "-"], token=token, _stdin=json.dumps(cmt))
+    code, out, _ = _gh(["--method", "POST", f"https://api.github.com/repos/{owner_repo}/git/commits"],
+                        token=token, _stdin=json.dumps(cmt))
     if code != 0 or not out.strip():
         raise RuntimeError(f"create commit failed (exit={code})")
     return json.loads(out)["sha"]

@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass, fields
 from typing import Dict, Optional
 
-# 相对本文件（conductor/）上溯两级到仓库根，再进 .loop/schemas/state.json。
+# 相对本文件（conductor/）上溯一级到仓库根，再进 .loop/schemas/state.json。
 SCHEMA_DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".loop", "schemas")
 )
