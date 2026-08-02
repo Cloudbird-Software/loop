@@ -1,0 +1,171 @@
+name: freeze-yaml-check
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "single 只看当前 policy.yaml 状态 / selfcheck 触发 AC-4+AC-5 全闭环自检"
+        required: true
+        default: "single"
+        type: choice
+        options: ["single", "selfcheck"]
+
+# 只读：本 workflow 充当「机器可读消费方」。freeze.all==true 时评估门禁对
+# README/docs 的写步骤被 if: 守卫 skip 并打 FROZEN 标记；==false 时放行写。
+# selfcheck 仅在 checkout 工作树里临时翻开关，末尾复原到 HEAD，不制造远端脏改动。
+permissions: {contents: read}
+concurrency: {group: freeze-yaml-check, cancel-in-progress: false}
+
+jobs:
+  # === AC-3 机器可读消费方（freeze-check）===========
+  freeze-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Extract freeze.all from policy.yml
+        id: freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          case "$V" in
+            true|false) ;;
+            *) echo "::error::无法解析 freeze.all（got '$V'）"; exit 1 ;;
+          esac
+          echo "all=$V" >> "$GITHUB_OUTPUT"
+          echo "policy.freeze.all=$V"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: FROZEN marker (write steps blocked)
+        if: steps.freeze.outputs.all == 'true'
+        run: |
+          echo "FROZEN: freeze.active"
+
+      # 守卫写步骤：freeze.all != 'true' 才放行（AC-3/AC-4 正/负证点）。
+      # 若放行则落一个探针文件；被冻结时为唯一探测对象，不污染真实产物。
+      - name: Write README/docs step (gated)
+        id: blessed_write
+        if: steps.freeze.outputs.all != 'true'
+        run: |
+          set -euo pipefail
+          echo "write-allowed: freeze.all == false, docs write proceeds"
+          mkdir -p probe-output
+          echo "allowed" > probe-output/write.gate
+
+  # === 自检：workflow_dispatch → mode=selfcheck，演示 AC-4 / AC-5 闭环 ===
+  self-check:
+    if: inputs.mode == 'selfcheck'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {fetch-depth: 0}
+
+      - id: baseline
+        name: Baseline (ensure no probe artifact yet)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          rm -rf probe-output
+          test ! -e probe-output/write.gate
+
+      - name: Set freeze.all -> true (working tree only)
+        id: ac4
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("policy.yml")
+          t = p.read_text(encoding="utf-8")
+          t2 = t.replace("freeze:\n  all: false", "freeze:\n  all: true", 1)
+          assert t2 != t, "policy.yml 无 freeze.all=false 可翻"
+          p.write_text(t2, encoding="utf-8")
+          PY
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "true" || { echo "::error::翻 true 失败 (V=$V)"; exit 1; }
+          echo "FROZEN: freeze.active"
+          echo "frozen=1" >> "$GITHUB_OUTPUT"
+          echo "verified in job: policy.freeze.all=$V"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      # 用与 freeze-check 相同的守卫条件（all != 'true' 才写探针）在冻结期模拟一次
+      # 被守卫的写操作：all==true 时守卫不成立 → 不应落探针 → 证明冻结生效。
+      - name: AC4 · simulate gated write under freeze (must NOT write probe)
+        if: steps.ac4.outputs.frozen == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "true" || { echo "::error::冻结期 all 被意外改非 true"; exit 1; }
+          # 同 freeze-check 的守卫：all != 'true' 才写。
+          if [[ "$V" != "true" ]]; then
+            mkdir -p probe-output && echo allowed > probe-output/write.gate
+          fi
+          # 冻结期守卫不成立 → probe 必须不存在。
+          test ! -e probe-output/write.gate \
+            || { echo "::error::冻结期应被守卫拦截，但探针被写成 → 冻结失效"; exit 1; }
+          echo "FROZEN: write step gated, no write artifact produced"
+          echo "AC4-OK: freeze → 无写操作 + 日志含 FROZEN + 无产物落盘"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: Set freeze.all -> false (working tree only)
+        id: ac5
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("policy.yml")
+          t = p.read_text(encoding="utf-8")
+          t2 = t.replace("freeze:\n  all: true", "freeze:\n  all: false", 1)
+          assert t2 != t, "policy.yml 无 freeze.all=true 可翻回"
+          p.write_text(t2, encoding="utf-8")
+          PY
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "false" || { echo "::error::翻回 false 失败 (V=$V)"; exit 1; }
+          echo "unfrozen=1" >> "$GITHUB_OUTPUT"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      # 解冻后：守卫放行 → 探针应被写成 → 证明恢复。
+      - name: AC5 · write resumes after unfreeze (probe written)
+        if: steps.ac5.outputs.unfrozen == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "false" || { echo "::error::解冻后仍冻结"; exit 1; }
+          if [[ "$V" != "true" ]]; then
+            mkdir -p probe-output && echo allowed > probe-output/write.gate
+          fi
+          test -e probe-output/write.gate \
+            || { echo "::error::解冻后应恢复写，但探针未写成"; exit 1; }
+          echo "write-resumed: freeze.all == false, docs write proceeds"
+          echo "AC5-OK: unfreeze → 写操作恢复 + 探针成功落盘（无 FROZEN 残留）"
+          rm -rf probe-output
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: Restore policy.yml to HEAD
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- policy.yml
+          rm -rf probe-output
+          git diff --exit-code -- policy.yml
+          echo "policy.yml restored clean (no residual)"

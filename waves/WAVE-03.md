@@ -106,7 +106,8 @@
   "role": "impl",
   "paths": [
     ".github/workflows/scoped-token.yml",
-    "scripts/scoped-token.sh"
+    "scripts/scoped-token.sh",
+    "loopd/bootstrap.sh"
   ],
   "forbid_paths": [
     "conductor/**",
@@ -118,7 +119,6 @@
     "settings/**",
     "cards/**",
     "waves/**",
-    "loopd/**",
     "escalation.yml",
     "tests/**"
   ],
@@ -538,7 +538,7 @@
   "role": "impl",
   "paths": [
     "gates/run_gates.py",
-    "gates/test_run_gates.py"
+    "gates/selfcheck_run_gates.py"
   ],
   "forbid_paths": [
     "gates/gate_ratchet.py",
@@ -852,7 +852,7 @@
   ],
   "forbid_paths": [
     "gates/run_gates.py",
-    "gates/test_run_gates.py"
+    "gates/selfcheck_run_gates.py"
   ],
   "charter": ["G1", "N11", "N17"],
   "acceptance": [

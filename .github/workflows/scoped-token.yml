@@ -1,0 +1,73 @@
+# Scoped GitHub App Token — W3-2
+#
+# Mints a SHORT-LIVED (1h) GitHub App installation token, narrowed to the
+# explicit `repositories` list and limited to `permissions.contents: read`.
+# The minted token is injected into the environment at sandbox startup; a
+# persistent/常驻 token or PAT is NEVER minted here (CHARTER N15, G3).
+#
+# This workflow is `workflow_call`-reusable so the sandbox launch can trigger it.
+name: Scoped GitHub App Token (1h)
+
+on:
+  workflow_call:
+    inputs:
+      app_id:
+        description: 'GitHub App ID (authorizes the mint).'
+        required: true
+        type: string
+      repositories:
+        description: 'Comma-separated "owner/repositories" list to narrow the token scope to (AC-2).'
+        required: true
+        type: string
+    secrets:
+      app_private_key:
+        description: 'GitHub App PEM private key. Never a persistent PAT literal.'
+        required: true
+    outputs:
+      scoped_token:
+        description: 'Short-lived (1h) installation token scoped to repositories + contents: read.'
+        value: ${{ jobs.mint.outputs.scoped_token }}
+
+jobs:
+  mint:
+    name: Mint scoped 1h installation token
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # least privilege on the runner's own GITHUB_TOKEN
+    outputs:
+      scoped_token: ${{ steps.mint.outputs.token }}
+    steps:
+      - name: Checkout (to reach scripts/scoped-token.sh)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # AC-1: mint via the officially maintained actions/create-github-app-token
+      # (@v3.2.0 pinned to commit hash, per adv-security "pin to hash").
+      # NOTE: tibdex/github-app-token is archived; this is its maintainer-approved
+      # successor. A short-lived installation token is minted.
+      #
+      # IMPORTANT: this action does NOT emit an `expires_at` output (outputs are
+      # only `token` / `installation-id` / `app-slug`). GitHub hard-guarantees
+      # that installation access tokens always expire after exactly 1 hour, so
+      # the <=1h TTL is guaranteed by the platform itself; we do NOT fabricate an
+      # expires_at value (which would be a fake-green assertion, N11).
+      - name: Mint short-lived token (create-github-app-token)
+        id: mint
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # recommended over legacy app-id; still the GitHub App ID.
+          client-id: ${{ inputs.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          # AC-2 / AC-6: owner/repositories narrowing — the token can only act
+          # on these explicit repos, never the whole installation.
+          repositories: ${{ inputs.repositories }}
+          # AC-6 guard: ceiling the token at contents: read (+ nothing else).
+          permission-contents: read
+
+      # AC-5 / AC-6: sandbox startup consumes the token.
+      # - injects the minted short-lived token into the environment for the
+      #   sandbox startup to consume. Deliberately NOT persisted to any file.
+      - name: Inject token for sandbox startup
+        run: |
+          echo "GH_TOKEN=${{ steps.mint.outputs.token }}" >> "$GITHUB_ENV"
+          echo "GITHUB_TOKEN=${{ steps.mint.outputs.token }}" >> "$GITHUB_ENV"
+          echo "LOOP_SCOPED_TOKEN=1" >> "$GITHUB_ENV"

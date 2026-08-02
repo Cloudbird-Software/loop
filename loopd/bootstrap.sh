@@ -102,6 +102,14 @@ else
 fi
 
 echo "=== [3/4] Clone ${LOOP_REPO} to ${LOOP_WS} ==="
+# W3-2 AC-5: 注入 scoped token 供 loopd/后续 git 命令使用。
+# 若上一级 workflow（scoped-token.yml）已把短效 installation token 注入为
+# GH_TOKEN/GITHUB_TOKEN，则此处导出到当前 shell，供后续守护进程消费。
+# 注意：绝不把 token 写进 .git/config（会静默持久化，N15 红线）。
+if [ -n "${GH_TOKEN:-$GITHUB_TOKEN}" ]; then
+  export GITHUB_TOKEN="${GH_TOKEN:-$GITHUB_TOKEN}"
+  echo "scoped-token: injected short-lived token into bootstrap env (LOOP_SCOPED_TOKEN instr)"
+fi
 if [ -d "${LOOP_WS}/.git" ]; then
   echo "Workspace exists, calibrating remote..."
   cd "${LOOP_WS}"

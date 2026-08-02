@@ -22,6 +22,15 @@ execute:
     cpu_shares: 512              # CPU 权重
     network: read_only           # 只读网络（可拉取但不可写生产仓）
     writable_paths: [/tmp]       # 仅允许写 /tmp（无生产仓库写权限）
+dispatch:
+  # W3-1 dispatcher 四数值（波前人类审批并手写落盘；dispatcher 只读不写，杜绝硬编码）。
+  # 唯一写者=W3-TK（freeze.all 翻转），本段其余字段为初值，未经同意勿改。
+  max_concurrent_sandboxes: 4
+  concurrency_per_repo: 2
+  quota_token_threshold: 0.2     # 令牌桶剩余 <20% 即降级
+  daily_budget: 30               # 单位 US$
+  rings:
+    ring0: [impl]                # W3-6 AC-2：读 ring0 判定 ring，dispatcher 只读
 freeze:
   all: false
   chains: []

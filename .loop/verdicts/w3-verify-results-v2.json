@@ -1,0 +1,284 @@
+[
+  {
+    "card": "W3-1",
+    "ac": "AC-0",
+    "status": "PASS",
+    "evidence": "policy.yml contains 4+ numeric config keys"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-0b",
+    "status": "PASS",
+    "evidence": "policy.yml contains rings section"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-0c",
+    "status": "PASS",
+    "evidence": "policy.yml contains freeze section"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "conductor.dispatcher.dispatch importable"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "dispatcher writes to assignments/ path"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "ASSIGNMENT_MISMATCH check present"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-4",
+    "status": "PASS",
+    "evidence": "No hardcoded constants in dispatcher"
+  },
+  {
+    "card": "W3-1",
+    "ac": "AC-4b",
+    "status": "PASS",
+    "evidence": "dispatcher uses backpressure"
+  },
+  {
+    "card": "W3-2",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "scoped-token.yml uses create-github-app-token v3"
+  },
+  {
+    "card": "W3-2",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "scoped-token.sh has repositories scope"
+  },
+  {
+    "card": "W3-2",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "token 1h expiration configured"
+  },
+  {
+    "card": "W3-2",
+    "ac": "AC-4",
+    "status": "FAIL",
+    "evidence": "Persistent token forms found (count=0\n0)"
+  },
+  {
+    "card": "W3-3",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "backpressure.check_budget importable"
+  },
+  {
+    "card": "W3-3",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "X-RateLimit-Remaining referenced"
+  },
+  {
+    "card": "W3-3",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "daily_budget referenced in backpressure"
+  },
+  {
+    "card": "W3-3",
+    "ac": "AC-4",
+    "status": "PASS",
+    "evidence": "backpressure has incident/ degraded semantics"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "escalation.yml has 12 ESC- rules (\u226512)"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "escalation has notify/warn/freeze levels"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "consecutive_breach_threshold defined"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-4",
+    "status": "PASS",
+    "evidence": "escalation.evaluate importable"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-5",
+    "status": "PASS",
+    "evidence": "severity=medium \u2192 evaluate returns notify"
+  },
+  {
+    "card": "W3-4",
+    "ac": "AC-6",
+    "status": "PASS",
+    "evidence": "severity=critical \u2192 evaluate returns freeze"
+  },
+  {
+    "card": "W3-5",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "human_queue.add_decision/build_digest importable"
+  },
+  {
+    "card": "W3-5",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "SLA referenced in human_queue"
+  },
+  {
+    "card": "W3-5",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "human_queue references escalation"
+  },
+  {
+    "card": "W3-6",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "runbook-freeze.md exists with required sections"
+  },
+  {
+    "card": "W3-6",
+    "ac": "AC-2a",
+    "status": "PASS",
+    "evidence": "policy.yml contains ring0"
+  },
+  {
+    "card": "W3-6",
+    "ac": "AC-2b",
+    "status": "PASS",
+    "evidence": "No MERGE_FROZEN in code files"
+  },
+  {
+    "card": "W3-6",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "freeze-yaml-check.yml exists with freeze logic"
+  },
+  {
+    "card": "W3-7",
+    "ac": "AC-0",
+    "status": "PASS",
+    "evidence": "demo_cards.json has 6 cards"
+  },
+  {
+    "card": "W3-7",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "72h-events.jsonl non-empty"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "canary.yml uses append mode for history.jsonl"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "canary/history.jsonl exists with content"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "canary-nightly.sh supports --since"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-5",
+    "status": "PASS",
+    "evidence": "history.jsonl append-only (authoritative cross-day source). results.json is snapshot only (as clarified in code comments)"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-6",
+    "status": "PASS",
+    "evidence": "CLEANUP_WARN found in canary-chain.sh (cleanup decoupled from chain health)"
+  },
+  {
+    "card": "W3-8",
+    "ac": "AC-7",
+    "status": "PASS",
+    "evidence": "No silent stderr suppression in cleanup commands"
+  },
+  {
+    "card": "W3-9",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "events.append_event importable"
+  },
+  {
+    "card": "W3-9",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "state_reconcile.reconcile importable"
+  },
+  {
+    "card": "W3-9",
+    "ac": "AC-4",
+    "status": "PASS",
+    "evidence": "events writes under loop-state path"
+  },
+  {
+    "card": "W3-10",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "run_gates.reduce_exit/trust_check importable"
+  },
+  {
+    "card": "W3-10",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "selfcheck_run_gates.py passes (exit code contract verified)"
+  },
+  {
+    "card": "W3-10",
+    "ac": "AC-6",
+    "status": "PASS",
+    "evidence": "reason field present in run_gates"
+  },
+  {
+    "card": "W3-TK",
+    "ac": "AC-1",
+    "status": "PASS",
+    "evidence": "tick.STEPS importable"
+  },
+  {
+    "card": "W3-TK",
+    "ac": "AC-2",
+    "status": "PASS",
+    "evidence": "cas_update success path emits real events (not dead string)"
+  },
+  {
+    "card": "W3-TK",
+    "ac": "AC-3",
+    "status": "PASS",
+    "evidence": "STEPS registered with reconcile/escalate"
+  },
+  {
+    "card": "W3-TK",
+    "ac": "AC-4",
+    "status": "PASS",
+    "evidence": "tick reads escalation.yml"
+  }
+]
