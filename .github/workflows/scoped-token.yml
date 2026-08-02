@@ -38,7 +38,7 @@ jobs:
       scoped_token: ${{ steps.mint.outputs.token }}
     steps:
       - name: Checkout (to reach scripts/scoped-token.sh)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # AC-1: mint via the officially maintained actions/create-github-app-token
       # (@v3.2.0 pinned to commit hash, per adv-security "pin to hash").
@@ -52,7 +52,7 @@ jobs:
       # expires_at value (which would be a fake-green assertion, N11).
       - name: Mint short-lived token (create-github-app-token)
         id: mint
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           # recommended over legacy app-id; still the GitHub App ID.
           client-id: ${{ inputs.app_id }}

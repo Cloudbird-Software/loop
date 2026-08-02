@@ -538,7 +538,7 @@
   "role": "impl",
   "paths": [
     "gates/run_gates.py",
-    "gates/test_run_gates.py"
+    "gates/selfcheck_run_gates.py"
   ],
   "forbid_paths": [
     "gates/gate_ratchet.py",
@@ -852,7 +852,7 @@
   ],
   "forbid_paths": [
     "gates/run_gates.py",
-    "gates/test_run_gates.py"
+    "gates/selfcheck_run_gates.py"
   ],
   "charter": ["G1", "N11", "N17"],
   "acceptance": [

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""gates/test_run_gates.py — W3-10 反注入重实现自检套件。
+"""gates/selfcheck_run_gates.py — W3-10 反注入重实现自检套件。
 
-用 `python3 gates/test_run_gates.py` 运行，全部断言通过则 exit 0。
+用 `python3 gates/selfcheck_run_gates.py` 运行，全部断言通过则 exit 0。
 覆盖 AC-2（reduce_exit 归约优先级）、AC-4（trust_check 反注入/realpath 包含性）、
 AC-5（min_gates 反空过 → exit 2）。
 """
