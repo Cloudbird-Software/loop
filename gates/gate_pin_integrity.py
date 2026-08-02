@@ -92,8 +92,11 @@ def check_workflow_file(path):
                 continue
             scanned += 1
             if loop_sha is None:
-                # 只有 uses、没有 loop-sha：属于非 pin-integrity 目标，直接放行
-                reasons.append(f"step in job {job_name!r} has uses but no loop-sha; skipped")
+                # 只有 uses、没有 loop-sha：属于非 pin-integrity 目标，直接放行。
+                # 信息性说明不得计入 reasons——reasons 是判定 ok 的来源（len(reasons)==0），
+                # 混入会误判整文件不通过，造成"仅有 uses 无 loop-sha 即恒 exit 1"的
+                # false-positive（F-004）。改用 info: 前缀扫描日志保持可观测性。
+                print(f"info: step in job {job_name!r} has uses but no loop-sha; not a pin-integrity target, skipped")
                 continue
             ok1, r1 = check_sha_vs_loop_sha(uses, loop_sha)
             ok2 = True
