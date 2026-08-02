@@ -50,8 +50,26 @@ def package_from_requirement(line):
     return m.group(1).lower() if m else None
 
 
+def _in_script_string_literal(line):
+    """判断该行是否是嵌入脚本/语言的字符串字面量（如 Python `"uses: a/b@x"`）。
+
+    gate_upstream 按行 diff 扫描，会把 workflow Python heredoc 里的 fixture
+    字符串（如 C02 fault 里 `"uses: org/act@1111…"`）误判为真实 uses: 引用。
+    这类行的开头是引号（允许可选的 Python 字符串前缀 r/b/f/u/br/bf…），
+    与 YAML 顶层 `uses: ` 指令的行首模式不同，可据此跳过。
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    import re as _re
+    return bool(_re.match(r"^[ 	]*(r|b|f|u|br|bf|fb|ur|fu|uf|rb|br|fr|ub|buf|ubf|bufr)??['\"]", stripped) or _re.match(r"^[ 	]*['\"]", stripped))
+
+
 def refs_from_added(path, line):
     refs = []
+    # 跳过脚本/语言字符串字面量中的 `uses:` 与 `github.com/` 引用——它们不是真实外部依赖
+    if _in_script_string_literal(line):
+        return refs
     m = re.search(r"uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@", line)
     if m: refs.append(m.group(1))
     for owner, repo in re.findall(r"github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", line):
