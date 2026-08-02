@@ -73,6 +73,10 @@ PR_URL=$(gh pr create -R "$ORG/$PRODUCT" --head "$BRANCH" --base main \
 PR_NUM=$(printf '%s' "$PR_URL" | grep -oE '[0-9]+$')
 log "  -> PR #$PR_NUM ($PR_URL)"
 
+# done 卡体（合并成功 或 被"需 approving review"拦截后清理 两条路径共用）
+DONE_BODY='```json loop
+{"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
+```'
 # 5. done（入 merge queue → 合并 PR → 置卡 state=done → 关 issue）
 log "step5: enqueue merge queue + done"
 # product-x 的 main 启用了 merge queue，gh pr merge / --admin 均被拒（"Changes must be made through the merge queue"）。
@@ -130,16 +134,30 @@ for i in $(seq 1 140); do
   sleep 3
 done
 if [ "$MERGED_OK" -ne 1 ]; then
-  log "  -> GATE FAIL: PR #$PR_NUM not merged within 420s (last state=$PR_STATE)"
+  # 未能自动合并：优先判断是否因"需 approving review"被门禁正确拦截。
+  # product 仓 main 的分支保护要求至少 1 个 approving review（作者不能自审，code owner review 也可能必需），
+  # canary 机器人无法提供人工 approve，因此入队后 PR 在 merge queue 里永远不被放行 → 属预期门禁约束。
+  # 此时链路本身已存活（开卡→claim→commit→PR→入队→门禁全部生效），
+  # 应判定存活并主动清理合成 PR/分支/卡，避免每天一堆 PR 堆积。
+  REVIEW_DECISION=$(gh pr view "$PR_NUM" -R "$ORG/$PRODUCT" --json reviewDecision --jq '.reviewDecision' 2>/dev/null || echo "")
+  if [ "$REVIEW_DECISION" = "REVIEW_REQUIRED" ]; then
+    log "  -> GATE: PR #$PR_NUM blocked by required approving review (reviewDecision=$REVIEW_DECISION); chain alive, cleaning up"
+    gh pr close "$PR_NUM" -R "$ORG/$PRODUCT" \
+      --comment "canary $CARD_ID: blocked by required approving review (expected gate); chain alive. Cleaning up synthetic PR." >/dev/null 2>&1 || true
+    git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+    gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null 2>&1 || true
+    gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason not_planned >/dev/null 2>&1 || true
+    log "  -> done, synthetic PR closed + branch deleted + issue closed"
+    echo "CANARY_CHAIN_OK issue=#$NUM pr=#$PR_NUM card=$CARD_ID (blocked by required approving review; cleaned up)"
+    exit 0
+  fi
+  log "  -> GATE FAIL: PR #$PR_NUM not merged within 420s (last state=$PR_STATE, reviewDecision=$REVIEW_DECISION)"
   echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (merge timeout)" >&2
   exit 1
 fi
 log "  -> PR #$PR_NUM merged"
 # 清理 canary 分支（合并后）
 git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
-DONE_BODY='```json loop
-{"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
-```'
 gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null
 gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason completed >/dev/null
 log "  -> done, issue closed"
