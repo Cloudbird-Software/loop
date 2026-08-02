@@ -135,6 +135,67 @@ def _emit_event(owner_repo, ref, base_sha, new_sha, token):
         print(f"[warn] cas event emit failed: {type(_e).__name__}: {_e}", file=sys.stderr)
 
 
+def update_files(owner_repo, base_sha, files, message, ref="heads/loop-state",
+                 token=None, force=False):
+    """一次性把多个文件 blob 写进 loop-state 分支且推进 ref（W3 事件持久化复用）。
+
+    与 cas_update 的区别：本函数**不发射事件**（供 events.sync_to_loop_state 把事件
+    日志本身落 loop-state 用，避免"持久化事件又触发事件"的递归/噪音）。文件以
+    {path: content} 传入（path 为相对 loop-state 根的路径，如 events/20260802.jsonl）。
+
+    行为同上 CAS 纪律：
+      - force=True / 缺参 → ValueError 拒绝；
+      - ref 当前 sha != base_sha 或 PATCH 422 → CASConflict（读后重试）；
+      - 其余 API 失败 → RuntimeError。
+    返回 new_sha（写成功）。
+    """
+    if force:
+        raise ValueError("refusing force=true: CAS must never silently overwrite")
+    if not owner_repo or not base_sha or not files or not message:
+        raise ValueError("owner_repo/base_sha/files/message are required")
+
+    cur = current_sha(owner_repo, ref=ref, token=token)
+    if cur is not None and cur != base_sha:
+        raise CASConflict(f"ref {ref} at {cur}, expected base {base_sha}")
+
+    import json as _json
+    # 1) 读父 commit 拿到父 tree（作为 base_tree，保留分支既有文件）
+    code, out, _ = _gh([f"/repos/{owner_repo}/git/commits/{base_sha}"], token=token)
+    if code != 0 or not out.strip():
+        raise RuntimeError(f"read parent commit failed (exit={code})")
+    parent_tree = _json.loads(out)["tree"]["sha"]
+
+    # 2) 在其上叠加全部 files 的 blob → 建 tree → 建 commit
+    tree = {
+        "base_tree": parent_tree,
+        "tree": [{"path": p, "mode": "100644", "type": "blob", "content": c}
+                 for p, c in files.items()],
+    }
+    code, out, _ = _gh(["--method", "POST", f"/repos/{owner_repo}/git/trees"],
+                       token=token, _stdin=_json.dumps(tree))
+    if code != 0 or not out.strip():
+        raise RuntimeError(f"create tree failed (exit={code})")
+    tree_sha = _json.loads(out)["sha"]
+    cmt = {"message": message, "tree": tree_sha, "parents": [base_sha]}
+    code, out, _ = _gh(["--method", "POST", f"/repos/{owner_repo}/git/commits"],
+                       token=token, _stdin=_json.dumps(cmt))
+    if code != 0 or not out.strip():
+        raise RuntimeError(f"create commit failed (exit={code})")
+    new_sha = _json.loads(out)["sha"]
+
+    # 3) PATCH ref force=false（非快进 422 → CASConflict），与 cas_update 同语义
+    code, out, err = _gh(
+        ["--method", "PATCH", f"/repos/{owner_repo}/git/refs/{ref}"],
+        token=token, _stdin=_json.dumps({"sha": new_sha, "force": False}),
+    )
+    if code == 0:
+        return new_sha
+    if "422" in err or "422" in out or "fast forward" in (err or out).lower() \
+            or "non-fast-forward" in (err or out).lower():
+        raise CASConflict(f"422 on PATCH {ref}: base moved (concurrent write), no write applied")
+    raise RuntimeError(f"PATCH {ref} failed (exit={code}): {err or out}")
+
+
 def _create_commit(owner_repo, parent_sha, message, path, content, token=None):
     """用 GitHub git data API 造一个真实 commit（父=parent_sha，含一个独占文件）。
 

@@ -1092,12 +1092,23 @@ class _StepTimeoutError(Exception):
 # 纯库由 W3-4/5/9 提供；此处只做注册与失败上报（fail-closed，绝不吃假绿）。
 # ==================================================================
 def reconcile_step():
-    """[W3-TK] 事件-投影对账步：读事件日志 vs 当前卡状态投影，diff≠0 / 空日志 → Incident+不可用。"""
+    """[W3-TK] 事件-投影对账步：观测真实状态迁移 → 持久化事件日志到 loop-state →
+    对账（diff≠0 / 空日志 → Incident+不可用，fail-closed，绝不假绿）。
+
+    事件源修复（#299 根因）：事件日志不再读"全新 checkout 的本地空目录"，而是由
+    控制面（CONDUCTOR_APP，可写 loop-state）把真实观测到的状态迁移持久化到
+    loop-state/events/*.jsonl 后读回对账。观测差分 = 比较本轮卡状态投影 vs 上轮
+    loop-state 快照，覆盖 loopd 沙盒与 tick 两侧的真实状态变化，无需改动状态机写路径。
+    """
     print("[reconcile] event-vs-projection reconcile...")
+    import json as _json
     from conductor import state_reconcile, events
+
     root = os.environ.get("LOOP_STATE") or str(LOOP_ROOT / ".loop" / "state")
-    events_dir = events.resolve_events_root(root)
-    rows, _ = events.load_events(events_dir)
+    token = os.environ.get("GH_TOKEN")
+    # 事件日志权威持久化在控制面 loop-state 分支（N31）
+    state_repo = CONTROL_REPO
+
     proj = {}
     try:
         for it, blk in get_cards():
@@ -1105,7 +1116,61 @@ def reconcile_step():
                 proj[blk["id"]] = blk.get("state")
     except Exception as e:  # noqa: BLE001 —— 投影读取失败不中断对账，仅告警
         print(f"[warn] projection read failed: {e}", file=sys.stderr)
-    res = state_reconcile.reconcile(rows, projection=proj)
+
+    # ---- 采集：观测差分 → 发射真实状态迁移事件 + 事件/快照持久化到 loop-state ----
+    try:
+        prev = events.load_json_from_loop_state(state_repo, token=token) or {}
+        transitions = []
+        for cid, state in proj.items():
+            pstate = prev.get(cid)
+            if pstate != state:
+                transitions.append(events.emit_transition(
+                    cid, pstate, state, actor="loop-conductor", repo=REPO, root=root))
+        events.sync_to_loop_state(
+            state_repo, token=token, root=root,
+            extra_files={events.SNAPSHOT_PATH: _json.dumps(proj, ensure_ascii=False, sort_keys=True)})
+        print(f"    observed transitions={len(transitions)}")
+    except Exception as e:  # noqa: BLE001 —— 采集失败不伪造数据，交由对账 fail-closed
+        print(f"[reconcile] event capture failed: {type(e).__name__}: {e}", file=sys.stderr)
+
+    # ---- 对账源：loop-state 持久权威事件；读不到（未接通）时回退本地观测 ----
+    rows, bad = [], 0
+    try:
+        rows_branch, bad = events.load_from_loop_state(state_repo, token=token)
+        rows = list(rows_branch)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] load_from_loop_state failed: {e}", file=sys.stderr)
+    if not rows and bad == 0:
+        local_dir = events.resolve_events_root(root)
+        rows_local, bad_local = events.load_events(str(local_dir))
+        if rows_local:
+            rows, bad = rows_local, bad_local
+
+    # 只对仍在本轮投影中的卡的迁移事件对账（关闭/幽灵卡的历史事件不参与，避免假 diff）；
+    # 并把事件归约到"每卡最新一条"：#299 复发根因——观测差分会为同一张卡累积多条迁移
+    # 事件，reconcile 若逐条比对会把历史中间迁移（如 *->ready，事件已发生但卡已到
+    # claimed/done）与最终投影判为不符，制造永久假 diff。每卡最新事件的 to 状态才代表
+    # 当前投影真相，故对账源应取每卡最新事件（反真空、反 fail-open 语义不丢）。
+    def _active(ev):
+        c = ev.get("card") or ev.get("card_id") or ev.get("id")
+        return c in proj
+
+    active_rows = [e for e in rows if _active(e)]
+    latest_by_card = {}
+    _order = []
+    for ev in active_rows:
+        c = ev.get("card") or ev.get("card_id") or ev.get("id")
+        if c is None:
+            continue
+        if c not in latest_by_card:
+            _order.append(c)
+        latest_by_card[c] = ev
+    reconcile_rows = [latest_by_card[c] for c in _order]
+
+    res = state_reconcile.reconcile(reconcile_rows, projection=proj)
+    if bad:
+        res.diff += bad
+        res.incidents.append(f"unparseable event rows={bad}")
     print(f"    events={res.events_total}, coverage={res.coverage}, diff={res.diff}")
     if not res.ok:
         for inc in res.incidents:
