@@ -27,9 +27,9 @@
 
 ## 波前清单（人类执行）
 
-- [x] dispatcher 四数值已批准（`max_concurrent_sandboxes=4`、每仓并发 `2`、令牌桶 `<20% 降级`、日预算 `$30`），由 W3-1 写入 policy.yml。
+- [x] dispatcher 四数值已批准（`max_concurrent_sandboxes=4`、每仓并发 `2`、令牌桶 `<20% 降级`、日预算 `$30`），由波前人工项手写进 policy.yml（W3-1 只读、不落盘）。
 - [x] escalation.yml 初版按**低强度启动**批准（默认 `on_sla_breach: notify`，freeze 仅 `severity=critical` 或连续多次违约发通知，实际全局冻结由 kill switch `freeze.all` 统一承担——双机制合一）。
-- [ ] **人类手写 policy.yml 四数值初值**（或交 W3-1 落盘，以其 AC 为准）——W3-1 断言"从 policy.yml 读值、不硬编码"。
+- [ ] **人类手写 policy.yml 初值**：四数值（max_concurrent_sandboxes=4/每仓并发2/令牌桶<20%/日预算$30）+ `rings:` 段 + `freeze:` 段（freeze.all:false）。policy.yml 唯一写者=W3-TK（freeze.all 翻转）；W3-1 只读。（W3-1 AC-0 断言值存在；W3-6 AC-2 断言 ring0）
 - [ ] 清扫 W1-9 遗留：关闭 product-x 已泄漏的 canary 合成票（epoch 早于本波启动，`state:done`/`not_planned`）——W3-8 AC-8。
 - [ ] 产 `waves/WAVE-03/demo_cards.json`：6 张演示卡（含 1 跨仓、1 loop 机制、1 注定失败标记 `fail:true`），每卡 id/repo/tier/acceptance 摘要。
 - [ ] kill switch 演练预约在波中第三天。
@@ -45,12 +45,11 @@
   "schema": 1,
   "id": "W3-1",
   "wave": "WAVE-03",
-  "objective": "conductor/dispatcher.py 派卡引擎 + policy.yml 落盘四数值（人类已批：max_concurrent_sandboxes=4/每仓并发2/令牌桶<20%/日预算$30；dispatcher 一律从 policy.yml 读值不硬编码）→ 写 loop-state/assignments/<sandbox>.json → 沙盒只拉自己的卡（推-拉混合），assignment 篡改拒绝 ASSIGNMENT_MISMATCH",
+  "objective": "conductor/dispatcher.py 派卡引擎 + 从 policy.yml 读四数值/rings/freeze（四数值+rings+freeze:false 由波前人工项落盘，本卡只读不写；dispatcher 一律从 policy.yml 读值不硬编码，读四数值=4/每仓并发2/令牌桶<20%/日预算$30）→ 写 loop-state/assignments/<sandbox>.json → 沙盒只拉自己的卡（推-拉混合），assignment 篡改拒绝 ASSIGNMENT_MISMATCH；freeze.all=true 时拒派新卡（全局冻结消费方之一）；policy.yml 唯一写者=W3-TK（freeze.all）",
   "tier": "critical",
   "role": "impl",
   "paths": [
-    "conductor/dispatcher.py",
-    "policy.yml"
+    "conductor/dispatcher.py"
   ],
   "forbid_paths": [
     "conductor/backpressure.py",
@@ -72,17 +71,18 @@
     "waves/**",
     "tests/**"
   ],
-  "charter": ["G1", "N30", "D4"],
+  "charter": ["G1", "N30"],
   "acceptance": [
-    "AC-0: policy.yml 含 max_concurrent_sandboxes/每仓并发/令牌桶阈值/日预算 四 key（grep -cE 'max_concurrent_sandboxes' policy.yml ≥1；grep -c 'concurrency_per_repo\\|quota_token_threshold\\|daily_budget' policy.yml ≥3）",
+    "AC-0: policy.yml 含四数值 + rings + freeze 三段（grep -cE 'max_concurrent_sandboxes|concurrency_per_repo|quota_token_threshold|daily_budget' policy.yml ≥4；grep -q 'rings:' policy.yml；grep -q 'freeze:' policy.yml，EXIT 均 0）",
     "AC-1: python3 -c \"from conductor.dispatcher import dispatch; print('ok')\" EXIT=0",
     "AC-2: grep -q 'assignments/' conductor/dispatcher.py（写 loop-state/assignments/<sandbox>.json）",
     "AC-3: 沙盒只拉自己的卡：assignment 带 sandbox 标识，拉取侧校验一致（grep ASSIGNMENT_MISMATCH）",
-    "AC-4: dispatcher 从 policy.yml 读四数值而非硬编码（grep -E 'max_concurrent|quota_token|daily_budget|per_repo' conductor/dispatcher.py；并在源码断言无硬编码死值，EXIT=0）",
-    "AC-4b（A7 收敛·单一预算判断）: dispatch 的并发/预算裁决统一调用 conductor/backpressure 库（import check_budget 并以其 return 为准，grep 'from conductor.backpressure import' 或等价 import，EXIT=0；不做第二套独立预算逻辑）",
-    "AC-5（负证）: 把 sandbox-A 的 assignment 篡改指向 sandbox-B 的卡 → bash 脚本拉取校验收 ASSIGNMENT_MISMATCH 且 EXIT≠0（以可执行负证脚本为准，非仅 grep）"
+    "AC-4: dispatcher 从 policy.yml 读四数值而非硬编码。具体命令：python3 - <<'PY'\nimport ast,sys\nsrc=open('conductor/dispatcher.py').read(); t=ast.parse(src)\nvals={}; import re\nfor a in ast.walk(t):\n    if isinstance(a,ast.Assign):\n        for x in a.targets:\n            if getattr(x,'id','') in ('MAX_CONCURRENT','CONCURRENCY_PER_REPO','QUOTA_THRESHOLD','DAILY_BUDGET'):\n                raise SystemExit('hardcode %s'%x.id)\nprint('ok')\nPY（无 DISpatcher 自编硬编码常量；值一律来自 policy.yml 读取）EXIT=0",
+    "AC-4b（A7 收敛·单一预算判断）: dispatch 的并发/预算裁决统一调用 conductor/backpressure 库（grep 'from conductor.backpressure import' conductor/dispatcher.py，EXIT=0；不做第二套独立预算逻辑）",
+    "AC-4c（freeze 消费方·机器可读）: dispatcher 读 policy.yml freeze.all；freeze.all=true 时 dispatch 拒派新卡并日志含 FROZEN（bash <<'SH'：fetch 下 freeze.all 置 true 的样本，断言 dispatch 返回 rejected 且无新 assignment 写入，EXIT=0）",
+    "AC-5（负证·内联可执行）: 篡改 sandbox-A assignment 指向 sandbox-B → bash <<'SH' 内联脚本拉取校验得 ASSIGNMENT_MISMATCH 且 EXIT≠0"
   ],
-  "blocked_by": [],
+  "blocked_by": ["W3-3"],
   "budget": 1.2,
   "state": "ready",
   "claim_id": null,
@@ -183,10 +183,10 @@
     "AC-2: grep -q 'X-RateLimit-Remaining' conductor/backpressure.py",
     "AC-3: grep -q 'daily_budget' conductor/backpressure.py（读 policy.yml 日预算，非硬编码）",
     "AC-4（撞限显式降级）: 背压降级路径写 Incident/issue，绝不静默 continue（grep -E 'incident|issue|alert' 在降级分支）",
-    "AC-5（负证 N34）: 日预算=0（LOOP_SIMULATE_BUDGET=0 或 policy 注入）→ dispatcher 拒派 + Incident + **未铸任何 token**（bash 实测 EXIT≠0，且 `git -C .loop/logs grep` 无 token 铸造记录）",
-    "AC-6（行为负证）: 并当前置 1 + 投 3 张无冲突卡 → 恰好 1 张进 claimed（bash 轮询 loop-state/assignments 计数 ==1，EXIT=0 断言；否则 FAIL）"
+    "AC-5（负证 N34·内联）: 日预算=0（LOOP_SIMULATE_BUDGET=0）→ 背压返回拒绝 + Incident + 未铸 token（bash <<'SH' 断言 check_budget 返回拒绝、Incident 打开、无 token 铸造记录，EXIT≠0）",
+    "AC-6（行为负证·内联）: 并当前置 1 + 投 3 张无冲突卡 → 恰好 1 张进 claimed 且 rejected≥2（python/bash <<'SH' 确定性单元断言，不依赖真实时延；EXIT=0 对、否则 FAIL）"
   ],
-  "blocked_by": ["W3-1"],
+  "blocked_by": [],
   "budget": 0.8,
   "state": "ready",
   "claim_id": null,
@@ -338,7 +338,7 @@
   "charter": ["G1", "N18"],
   "acceptance": [
     "AC-1: docs/runbook-freeze.md 存在且含 冻结/回滚 pin/全部打回 ready/导出状态/解冻恢复 五节（grep 各节标题）",
-    "AC-2: policy.yml 含 rings 与 freeze 段（grep -q 'freeze' policy.yml；W3-1 已落盘），无 MERGE_FROZEN 残留（grep -r 'MERGE_FROZEN' . 取非 0，双机制合一反向断言）",
+    "AC-2: policy.yml 含 rings 与 freeze 段（grep -q 'ring0' policy.yml；grep -q 'freeze' policy.yml；W3-1 AC-0/波前人工项已落盘）。代码层无 MERGE_FROZEN 残留（grep -rn 'MERGE_FROZEN' --include=*.py --include=*.sh --include=*.yml --include=*.yaml --include=*.json conductor/ gates/ .github/ scripts/ → 退出 1（无命中）才 PASS；限代码文件，不扫 waves/** 文档）",
     "AC-3（正证·消费方·机器可读）: 交付 .github/workflows/freeze-yaml-check.yml：freeze.all=true 时任何评估门禁对 README/docs 的写操作 step 被 skip 并打 FROZEN 标记（grep workflow 含 `if: ... freeze.all != 'true'` 守卫，EXIT=0）",
     "AC-4（行为正证·freeze 生效）: freeze.all=true 后跑全链 → 无写操作、日志含 FROZEN、loop-state commit 数不变（bash 断言 delta==0，EXIT=0）",
     "AC-5（行为负证·恢复）: freeze 后按 runbook 解冻 → 下游卡恢复可直接消费（bash 断言 freeze.all=false 后写操作恢复、无 FROZEN 残留，EXIT=0）",
@@ -363,7 +363,7 @@
   "schema": 1,
   "id": "W3-7",
   "wave": "WAVE-03",
-  "objective": "72h 演示执行（BOT 主跑，人类只观察）：第 4 天 06:00 UTC 一次性投放 6 张演示卡（见 demo_cards.json），仅观察不动 72h；产出 waves/WAVE-03/evidence/72h-events.jsonl 完整事件流；kill switch 演练在波中执行并恢复。【role=impl：本卡是执行/产证据，非盲一半验证；证据真伪由 V3-7 独立复核】",
+  "objective": "72h 演示执行（BOT 主跑，人类只观察）：第 4 天 06:00 UTC 由 scheduled_demo_drop 步（W3-TK）以 bot 身份一次性投放 6 张演示卡（见 demo_cards.json），仅观察不动 72h；产出 waves/WAVE-03/evidence/72h-events.jsonl 完整事件流；kill switch 演练在波中执行并恢复。演示卡由人类建卡，PR 由沙盒/bot 身份开与合（零干预=无人类 merge）【role=impl：本卡是执行/产证据，非盲一半验证；证据真伪由 V3-7 独立复核】",
   "tier": "critical",
   "role": "impl",
   "paths": [
@@ -381,6 +381,7 @@
     "lenses/**",
     "settings/**",
     "cards/**",
+    "waves/**",
     "escalation.yml",
     "tests/**"
   ],
@@ -388,10 +389,10 @@
   "acceptance": [
     "AC-0: demo_cards.json 存在且含 6 张卡（grep -c '\"repo\"' demo_cards.json ==6；含 1 张 fail:true）",
     "AC-1: waves/WAVE-03/evidence/72h-events.jsonl 非空（test -s）",
-    "AC-2（零干预·正向追溯）: 每张 merged 演示卡属于 demo_cards.json 白名单，且 PR author 为 bot/app 身份（gh pr view --json author），且入过 merge queue（事件流含 merge 事件与 bot actor 白名单）",
+    "AC-2（零干预·正向追溯）: 每张 merged 演示卡属于 demo_cards.json 白名单，且 merged_by 为 bot 白名单（gh pr view --json mergedBy：login ∈ {CONDUCTOR_APP, github-actions[bot], loop-canary-bot}），且投放事件由 bot actor 写入事件流（scheduled_demo_drop）。人类只建卡，不 merge",
     "AC-3: ≥1 张经历 reaper 回收后重试成功（事件流含 reclaim→ready 重试序列）",
     "AC-4: ≥1 张跨仓卡、≥1 张 loop 机制卡完成（事件流含对应 repo 维度）",
-    "AC-5: tick 步级 ≥11 步各有 last_success_at，含与 W3-TK 注册的对账/escalate/digest 步（grep tick Step 注册表）",
+    "AC-5: tick STEPS 中 W3-TK 新注册的 reconcile/escalate/digest/scheduled_demo_drop 四步各自有 last_success_at（python 读 tick Step 注册表断言四键存在且 last_success_at 非空；不设任意步数常量基线）",
     "AC-6: 72h 内 gh api rate_limit core remaining 从未低于 20%（记录 min）",
     "AC-7（时间跨度·防 12h 速成）: events.jsonl 首末条 timestamp 差 ≥72h（python 断言 >= 72*3600）",
     "AC-8（kill switch 演练）: 72h 内 freeze.all=true 演练 ≥1 次且可恢复（事件流含 freeze→unfreeze 序列，解冻后 freeze.all=false 且无 FROZEN 残留）"
@@ -457,7 +458,7 @@
     "AC-5: 覆盖式 results.json 改追加（grep 覆盖已移除）",
     "AC-6（假报警修复）: canary-chain.sh 清理失败（close issue/push delete 任一 fail）不在链路判据 exit1——链路存活由链路步骤判定，清理失败独立 CLEANUP_WARN（grep：清理分支与链路判据解耦）",
     "AC-7（不吞错）: canary-chain.sh/canary-survival.sh 失败分支去除 `>/dev/null 2>&1` 吞错，原因留痕（grep stderr 不再静默）",
-    "AC-8（清扫遗留·可执行）: bash:\n  LEFT=$(gh api 'search/issues?q=repo:cloudbird-software/product-x+label:card+is:open+created:<本波启动时间' --jq '.total_count')\n  [ \"$LEFT\" -eq 0 ] && echo clean（判定 EXIT=0；本波启动时间取 WAVE-03 首次引入 commit 时间戳，写进注释）"
+    "AC-8（清扫遗留·机器可读）: bash <<'SH'\n  START=$(git log --format=%ct --diff-filter=A -- waves/WAVE-03.md | tail -1)\n  LEFT=$(gh api 'search/issues?q=repo:cloudbird-software/product-x+label:card+is:open+created:<'$START' --jq .total_count)\n  [ \"$LEFT\" -eq 0 ] && echo clean && exit 0\nexit 1\nSH\n（LEFT: OPEN canary 合成票早于本波启动（取 WAVE-03.md 首次引入 commit 时间戳，自动读，无需人工替换））"
   ],
   "blocked_by": [],
   "budget": 0.8,
@@ -532,7 +533,7 @@
   "schema": 1,
   "id": "W3-10",
   "wave": "WAVE-03",
-  "objective": "重实现 C-step1：gates/run_gates.py 退出码收敛 + 反注入。① 单一归约器 reduce_exit（穷举无 default；优先级 untrusted(4)>unresolved(2)>error(3)>fail(1)>pass(0)）；② trust_check 用 realpath 包含性（拒 .. 逃逸/逃出根符号链接/setuid·setgid·sticky），解析到受控根外 → untrusted + exit4；③ min_gates 反空过；④ 每 gate 带 reason。注：原 c7eca50/315e45a/0dcfc9c 仓内不存在，全新重写非搬移（N13）。",
+  "objective": "重实现 C-step1：gates/run_gates.py 退出码收敛 + 反注入。① 单一归约器 reduce_exit（穷举无 default；归约优先级为『先命中者胜』的检查顺序，与存量代码一致：untrusted(4)→error(3)→unresolved(2)→fail(1)→pass(0)，括号内为退出码数值，非优先级刻度；用户字面语义 untrusted>error>unresolved>fail>pass，数值单调递减故两者一致）；② trust_check 用 realpath 包含性（拒 .. 逃逸/逃出根符号链接/setuid·setgid·sticky），解析到受控根外 → untrusted + exit4；③ min_gates 反空过；④ 每 gate 带 reason。注：原 c7eca50/315e45a/0dcfc9c 仓内不存在，全新重写非搬移（N13）。",
   "tier": "critical",
   "role": "impl",
   "paths": [
@@ -562,7 +563,7 @@
   "charter": ["G1", "G3", "N11", "N17"],
   "acceptance": [
     "AC-1: python3 -c \"from gates.run_gates import reduce_exit, trust_check; print('ok')\" EXIT=0",
-    "AC-2: 退出码契约 0/1/2/3/4（grep 归约优先级表），含旧优先级迁移说明（python -c 对混样断言优先级）",
+    "AC-2: 退出码契约 0/1/2/3/4（grep 归约优先级表），含旧优先级迁移说明（python -c 对混样断言优先级：构造含 untrusted+error+fail 的 sample 调 reduce_exit→断言返回 4；含 error+unresolved+fail→返回 3；仅 unresolved+fail→返回 2；仅 fail→返回 1；全 pass→返回 0；EXIT=0 才算过）。注意退出码数值与归约优先级分离：归约是检查顺序（untrusted→error→unresolved→fail→pass），数值 exit code 是输出结果",
     "AC-3: main 之下的逻辑无 sys.exit 直调（grep：sys.exit 仅出现在 main 守卫）",
     "AC-4（反注入·行为）: 符号链接逃逸受控根 → python -c 调 trust_check 断言返回 untrusted/exit4（EXIT≠0），伪造 /gates_evil 不被 /gates 前缀误判（realpath 包含性，非 startswith）",
     "AC-5（min_gates 反空过）: 实际执行 pass/fail 数 < min_gates → exit2（python -c 断言 EXIT=2）",
@@ -588,12 +589,13 @@
   "schema": 1,
   "id": "W3-TK",
   "wave": "WAVE-03",
-  "objective": "接线闭环：① conductor/cas.py 的 cas_update 成功路径调用 events.append_event（事件发射 owner，避免空日志真空绿）；② conductor/tick.py 注册 STEPS：对账步（调 state_reconcile.reconcile，失败开 Incident）+ escalate 步（调 escalation.evaluate 读 escalation.yml）+ digest 步（调 human_queue.build_digest）；使'事件-投影对账连续 72h diff=0'与 escalation 周期评估真实发生。tick.py/cas.py 仅本卡可改（评审 H1/B1/B9/A7/A8 采纳）",
+  "objective": "接线闭环：① conductor/cas.py 的 cas_update 成功路径调用 events.append_event（事件发射 owner，避免空日志真空绿）；② conductor/tick.py 注册 STEPS：对账步（调 state_reconcile.reconcile，失败开 Incident）+ escalate 步（调 escalation.evaluate 读 escalation.yml，critical→freeze 时置 policy.yml freeze.all=true）+ digest 步（调 human_queue.build_digest）+ 演示投放步 scheduled_demo_drop（bot 触发，事件流含投放事件）；③ freeze.all=true 时 tick 各步 skip 打 FROZEN。使'事件-投影对账连续 72h diff=0'与 escalation 周期评估真实发生。tick.py/cas.py 仅本卡可改（评审 H1/B1/B9/A7/A8/N2/N3/M1 采纳）",
   "tier": "critical",
   "role": "impl",
   "paths": [
     "conductor/tick.py",
-    "conductor/cas.py"
+    "conductor/cas.py",
+    "policy.yml"
   ],
   "forbid_paths": [
     "conductor/dispatcher.py",
@@ -606,23 +608,22 @@
     "loopd/**",
     ".github/**",
     "CHARTER.md",
-    "policy.yml",
     "prompts/**",
     "gates/**",
     "lenses/**",
     "settings/**",
     "cards/**",
-    "waves/**",
-    "escalation.yml"
+    "waves/**"
   ],
   "charter": ["G3", "N30", "N31"],
   "acceptance": [
     "AC-1: python3 -c \"from conductor.tick import STEPS; print('ok')\" EXIT=0",
-    "AC-2: grep -q 'append_event' conductor/cas.py（cas_update 成功路径发射，非注释死串——V3-TK 用删除仅留死串的负证复核）",
-    "AC-3: STEPS 注册含 reconcile/escalate/digest 三步（grep -E 'reconcile|escalate|build_digest' conductor/tick.py 在 STEPS 定义处）",
-    "AC-4: escalate 步读 escalation.yml 的 SLA/severity（grep -E 'escalation.yml|escalation.evaluate' conductor/tick.py）",
-    "AC-5（行为·单步指纹）: 注入 tick 第 3 步异常 → 该步 TICK_STEP_ERRORED + Incident，第 4–11 步仍执行，整体 exit 1（bash 注入断言，EXIT≠0；N4 判据落地）",
-    "AC-6（行为·活锁判定）: reconcile diff≠0 → 对账步 FAIL + 开 Incident（bash 注入 diff → EXIT≠0），不 fail-open"
+    "AC-2: grep -q 'append_event' conductor/cas.py（cas_update 成功路径发射，非注释死串——V3-TK 用 mock.patch/死串负证复核）",
+    "AC-3: STEPS 注册含 reconcile/escalate/digest/scheduled_demo_drop 步（grep -E 'reconcile|escalate|build_digest|scheduled_demo_drop' conductor/tick.py 在 STEPS 定义处）",
+    "AC-4: escalate 步读 escalation.yml 的 SLA/severity，且 critical→freeze 时置 freeze.all=true（grep -E 'escalation.yml|escalation.evaluate|freeze.all' conductor/tick.py）",
+    "AC-4b（freeze 消费方·机器可读）: freeze.all=true 时 tick 各 STEPS 执行前 skip 并打 FROZEN 标记（bash <<'SH' 注入 freeze.all=true，断言步骤日志 FROZEN 且无写副作用，EXIT=0）",
+    "AC-5（行为·单步指纹·内联）: 注入 tick 某步异常 → 该步 TICK_STEP_ERRORED + Incident，其余步仍执行，整体 exit 1（bash <<'SH' 内联注入断言，EXIT≠0；N4 判据落地）",
+    "AC-6（行为·活锁判定·内联）: reconcile diff≠0 → 对账步 FAIL + 开 Incident（bash <<'SH' 注入 diff → EXIT≠0），不 fail-open"
   ],
   "blocked_by": [
     "W3-4",
