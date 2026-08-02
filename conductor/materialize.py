@@ -270,13 +270,18 @@ def validate(cards, charter_ids):
             errors.extend(card_errors)
         else:
             valid.append(card)
-    # 5. paths 两两不交叉（只在 valid 卡之间检测；blocked_by 机制豁免）
+    # 5. paths 两两不交叉（只在同波次的 valid 卡之间检测；blocked_by 机制豁免）
+    #    跨波次卡的路径重叠是预期：波次严格串行执行（前一波关闭后才开后一波），
+    #    不同波次的卡在时间上绝不会并发，因此不做冲突判定。
     dep_pairs = _build_dependency_pairs(valid)
     for i, a in enumerate(valid):
         for b in valid[i+1:]:
             aid = a.get("id", "?")
             bid = b.get("id", "?")
             if GLOB(a.get("paths",[]), b.get("paths",[])):
+                # 跨波次不判定冲突（串行执行，永不并发）
+                if a.get("wave") != b.get("wave"):
+                    continue
                 # Skip conflict if cards have a blocked_by dependency (can never run concurrently)
                 a_blocks_b = b.get("id") in (a.get("blocked_by") or [])
                 b_blocks_a = a.get("id") in (b.get("blocked_by") or [])

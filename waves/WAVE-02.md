@@ -3,7 +3,7 @@
 > **目标**：状态权威从 GitHub Issue 迁到 `loop-state` orphan 分支（一次解决伪 CAS、持久化黑洞、事件日志、audit 状态丢失四病）；单写者收口；epoch fencing；schema 单源；**产出系统历史上第一张 FMC-E 卡（分水岭）**。
 > **入口条件**：W1 全绿；AGENT_APP 就位（Day-0 已做则跳过）。
 > **宪法依据**：本波引用手册附录 A（已立法入 CHARTER N16-N35 + G6/G7）。
-> **波结构**：W2-5 与 W2-6 并行；其余按路径互斥 + blocked_by 序化，防止 materialize 路径冲突。
+> **波结构**：W2-5 与 W2-6 并行；其余按路径互斥 + blocked_by 序化，防止 materialize 路径冲突。4 张 critical 卡各配 V2-x 异构 verify 卡（N8.5）。跨波次路径重叠由 materializer 按波次隔离判定，不构成冲突。
 
 ## 波前清单（人类执行）
 
@@ -119,6 +119,46 @@
 }
 ```
 
+### V2-2 · 单写者异构验证
+
+```json loop
+{
+  "schema": 1,
+  "id": "V2-2",
+  "wave": "WAVE-02",
+  "objective": "对 W2-2 单写者做异构盲验证：负证 N1/N2（AGENT_APP 写 state:verified 被拒、直 push loop-state 被拒）+ 正证（intent 收到即经 cas 写）+ 产出 VERDICT",
+  "tier": "critical",
+  "role": "verify",
+  "verify_target": "W2-2",
+  "verify_heterogeneous": true,
+  "paths": [
+    ".loop/verdicts/w2-2.json"
+  ],
+  "forbid_paths": [
+    ".github/**",
+    "conductor/intent.py",
+    "conductor/cas.py"
+  ],
+  "charter": ["N19", "N30", "G1"],
+  "acceptance": [
+    "AC-1: 用 AGENT_APP 直 gh issue edit 写 state:verified → 权限拒绝（负证 N1，EXIT≠0）",
+    "AC-2: 用 AGENT_APP 直 push loop-state → ruleset 拒绝（负证 N2，EXIT≠0）",
+    "AC-3: 正常通道经 intent 提交+轮询可写状态成功（正证 EXIT=0）",
+    "AC-4: 盲一半：只读 W2-2 的 schema 与命令输出，不读 W2-2 源码注释与过程评论，据命令输出判 PASS/FAIL",
+    "AC-5: VERDICT 写为 .loop/verdicts/w2-2.json，含 card_id=W2-2 + 证据清单，verifier_model.vendor ≠ impl_model.vendor"
+  ],
+  "blocked_by": ["W2-2"],
+  "budget": 0.5,
+  "state": "ready",
+  "claim_id": null,
+  "lease_until": null,
+  "heartbeat_at": null,
+  "attempt": 0,
+  "session_ordinal": null,
+  "model": null
+}
+```
+
 ### W2-3 · epoch fencing + 看门狗 + gate_epoch
 
 ```json loop
@@ -213,6 +253,45 @@
   ],
   "blocked_by": ["W2-2"],
   "budget": 1.0,
+  "state": "ready",
+  "claim_id": null,
+  "lease_until": null,
+  "heartbeat_at": null,
+  "attempt": 0,
+  "session_ordinal": null,
+  "model": null
+}
+```
+
+### V2-4 · 哈希链审计异构验证
+
+```json loop
+{
+  "schema": 1,
+  "id": "V2-4",
+  "wave": "WAVE-02",
+  "objective": "对 W2-4 哈希链做异构盲验证：负证（伪造断链 commit 被 state_audit 检出 + Incident + quarantined）+ 正证（完整链 verify EXIT=0）+ 产出 VERDICT",
+  "tier": "critical",
+  "role": "verify",
+  "verify_target": "W2-4",
+  "verify_heterogeneous": true,
+  "paths": [
+    ".loop/verdicts/w2-4.json"
+  ],
+  "forbid_paths": [
+    "conductor/state_audit.py",
+    "conductor/state.py"
+  ],
+  "charter": ["G3", "N29"],
+  "acceptance": [
+    "AC-1: python3 conductor/state_audit.py --verify EXIT=0（正证：完整链合法）",
+    "AC-2: 注入伪造 prev 断链 commit → state_audit 检出 + Incident(state-tamper) + 卡 quarantined（负证 EXIT≠0）",
+    "AC-3: 断链时回滚到最后合法版本（源码 grep 回滚逻辑存在）",
+    "AC-4: 盲一半：只读 W2-4 schema 与命令输出，不读 W2-4 源码注释与过程评论",
+    "AC-5: VERDICT 写为 .loop/verdicts/w2-4.json，含 card_id=W2-4 + 证据清单，verifier_model.vendor ≠ impl_model.vendor"
+  ],
+  "blocked_by": ["W2-4"],
+  "budget": 0.5,
   "state": "ready",
   "claim_id": null,
   "lease_until": null,
@@ -332,6 +411,45 @@
 }
 ```
 
+### V2-6 · 转移表异构验证
+
+```json loop
+{
+  "schema": 1,
+  "id": "V2-6",
+  "wave": "WAVE-02",
+  "objective": "对 W2-6 声明式转移表做异构盲验证：负证（verified→in_progress 非法转移抛 IllegalTransition）+ 正证（穷举性质测试全绿）+ 产出 VERDICT",
+  "tier": "critical",
+  "role": "verify",
+  "verify_target": "W2-6",
+  "verify_heterogeneous": true,
+  "paths": [
+    ".loop/verdicts/w2-6.json"
+  ],
+  "forbid_paths": [
+    "loopd/domain/transitions.py",
+    "conductor/reconcile.py"
+  ],
+  "charter": ["N19", "G1"],
+  "acceptance": [
+    "AC-1: pytest -q tests/test_transitions.py 全绿（正证：全空间有定义）",
+    "AC-2: 构造 verified→in_progress 非法转移 → 抛 IllegalTransition（负证 EXIT≠0）",
+    "AC-3: merged→done+merged_sha+unblock_deps 的 reconciler 行为可验证（正证 EXIT=0）",
+    "AC-4: 盲一半：只读 W2-6 schema 与命令输出，不读源码注释与过程评论",
+    "AC-5: VERDICT 写为 .loop/verdicts/w2-6.json，含 card_id=W2-6 + 证据清单，verifier_model.vendor ≠ impl_model.vendor"
+  ],
+  "blocked_by": ["W2-6"],
+  "budget": 0.5,
+  "state": "ready",
+  "claim_id": null,
+  "lease_until": null,
+  "heartbeat_at": null,
+  "attempt": 0,
+  "session_ordinal": null,
+  "model": null
+}
+```
+
 ### W2-7 · materializer 事务化 + loopd 分层
 
 ```json loop
@@ -374,6 +492,45 @@
   ],
   "blocked_by": ["W2-6"],
   "budget": 1.0,
+  "state": "ready",
+  "claim_id": null,
+  "lease_until": null,
+  "heartbeat_at": null,
+  "attempt": 0,
+  "session_ordinal": null,
+  "model": null
+}
+```
+
+### V2-7 · 事务化/分层异构验证
+
+```json loop
+{
+  "schema": 1,
+  "id": "V2-7",
+  "wave": "WAVE-02",
+  "objective": "对 W2-7 materializer 事务化 + loopd 分层做异构盲验证：正证（幂等重跑收敛）+ 负证（叠加重复卡被收敛/无重复）+ 产出 VERDICT",
+  "tier": "critical",
+  "role": "verify",
+  "verify_target": "W2-7",
+  "verify_heterogeneous": true,
+  "paths": [
+    ".loop/verdicts/w2-7.json"
+  ],
+  "forbid_paths": [
+    "conductor/materialize.py",
+    "loopd/loopd.py"
+  ],
+  "charter": ["G0", "N31"],
+  "acceptance": [
+    "AC-1: python3 loopd/loopd.py help 契约仍可用（正证：行为不变，EXIT=0）",
+    "AC-2: 重跑 materializer 物化同一 wave → 幂等收敛，无重复卡、无缺失卡（正证 EXIT=0）",
+    "AC-3: 故障恢复：模拟中途中断后重跑 → 收敛（负证不产生重复物化，EXIT=0 且无重复）",
+    "AC-4: 盲一半：只读 W2-7 schema 与命令输出，不读源码注释与过程评论",
+    "AC-5: VERDICT 写为 .loop/verdicts/w2-7.json，含 card_id=W2-7 + 证据清单，verifier_model.vendor ≠ impl_model.vendor"
+  ],
+  "blocked_by": ["W2-7"],
+  "budget": 0.5,
   "state": "ready",
   "claim_id": null,
   "lease_until": null,
@@ -447,12 +604,14 @@
   "schema": 1,
   "id": "W2-9",
   "wave": "WAVE-02",
+  "repo": "product-x",
   "objective": "在 product-x 仓产出一张满足全部硬条件的卡（全机器端到端、证据链完整）：materializer 建→agent 领→CI 门禁全绿（无 SKIP）→verdict 由 CI 身份发布且 head_sha 绑定→merge queue 合入→卡自动终态。内容建议：给 tests/acceptance/ 加健康检查断言",
   "tier": "trivial",
   "role": "impl",
   "paths": [
     "product-x/tests/acceptance/**"
   ],
+  "verify": "本卡为跨仓卡（repo=product-x），路径带 product-x/ 前缀；在 loop 建单、在 product-x 开 PR，PR 正文反向链接回本 loop；验收按 FMC-E 七条件机械核验。",
   "forbid_paths": [
     ".github/**",
     "CHARTER.md",
@@ -478,7 +637,7 @@
     "AC-6: PR 经 merge queue 合入（gh pr view --json mergedAt 非空，required checks 全绿）",
     "AC-7: 合并 commit 是 origin/main 祖先（git merge-base --is-ancestor <sha> origin/main EXIT=0）"
   ],
-  "blocked_by": ["W2-5", "W2-8"],
+  "blocked_by": ["W2-3", "W2-4", "W2-5", "W2-8"],
   "budget": 0.5,
   "state": "ready",
   "claim_id": null,
@@ -512,6 +671,12 @@ git branch -a | grep -E 'loop-state'   # → loop-state 分支存在
 python3 -c "from conductor.cas import cas_update"           # EXIT=0
 # 并发实验（§6.4-2）
 python3 conductor/cas.py --concurrency-test                  # 5 沙盒 / 恰 1 成功其余 CASConflict / commit 数==+1
+# W2-2：单写者 intent 通道（正证）
+grep -q 'loop-intent' .github/workflows/intent.yml && echo ok  # event=repository_dispatch type=loop-intent
+grep -q 'done' conductor/intent.py && echo ok                 # 状态写发意图
+# W2-3：epoch fencing（正证；epoch 推导见 W2-3 AC）
+python3 -c "from loopd.domain.lease import lease_epoch; print('ok')"  # lease_epoch 写入
+grep -q 'e{epoch}\|e<%s>%.*epoch' loopd/domain/lease.py && echo ok    # 分支名含 epoch
 # W2-4：审计完整性
 python3 conductor/state_audit.py --verify                   # EXIT=0
 python3 conductor/state_reconcile.py --check                # diff==0
@@ -520,9 +685,13 @@ python3 -c "import conductor.schema_types; print('ok')"     # EXIT=0
 grep -rn 'lease_until' --include='*.py' loopd/ conductor/ gates/ | grep -v schema_types | wc -l  # → 0
 # W2-6：转移表穷举 + merge-completion
 pytest -q tests/test_transitions.py                          # 全绿：全空间有定义
+# W2-7：materializer 事务化 + loopd 分层（正证，§6.4-3）
+python3 loopd/loopd.py help | python3 -m json.tool >/dev/null # 契约仍可用
+python3 -c "from conductor.materialize import CARD_KEY; print('ok')"  # 幂等键存在
 # W2-8：身份外置读租约
 grep -q 'leases/' gates/gate_heterogeneity.py && echo ok     # 读租约非 env
 grep -q 'models:' policy.yml && echo ok                      # models 段存在
+# V2-x：4 张 verify 卡的 VERDICT（见各自卡 acceptance）
 # FMC-E 七条件（W2-9，见卡 acceptance）
 # 持久化验证（§6.4-4）：.loop/audit/state.json 在 loop-state；连续 3 次 audit 后 occurrences≥2
 python3 conductor/state_audit.py --verify
@@ -538,7 +707,12 @@ jq -e '.occurrences >= 2' .loop/audit/state.json            # 或等价检查
 # W2-4 N4：伪造 prev 断链 commit → state_audit 检出 + Incident + quarantined
 # W2-5    ：未知 schema 版本 → SCHEMA_UNSUPPORTED 显式错误
 # W2-6 N6：verified→in_progress → IllegalTransition
+# W2-7    ：重复卡号/断幂等 → materializer 收敛不产生重复物化（叠加后无重复）
 # W2-8 N5：篡改沙盒 LOOP_MODEL env 领 verify 卡 → 判定不受影响（读租约）
+# V2-2    ：AGENT_APP 写 state/wrong 或 push loop-state 被拒（对应 W2-2 N1/N2）
+# V2-4    ：伪造断链 commit → state_audit 检出 + quarantined（对应 W2-4 N4）
+# V2-6    ：verified→in_progress → IllegalTransition（对应 W2-6 N6）
+# V2-7    ：中途中断后重跑 → 无重复物化（对应 W2-7 幂等负证）
 ```
 
 ### Z. 关闭（全过才算 DONE）
