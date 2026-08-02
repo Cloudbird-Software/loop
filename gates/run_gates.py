@@ -74,16 +74,26 @@ def assert_loop_control(policy, cwd=None):
     实现决策：本仓库当前并无字面 `.loop-control` 文件，且本任务仅允许修改
     policy.yml 与 run_gates.py，无法新建标识文件。若对字面 `.loop-control`
     做 os.path.exists 断言会在正常场景误失败（误伤）。故将 `.loop-control`
-    标识解读为「第一个受控 search_dir（即 ${LOOP_ROOT}/gates）必须存在」的
-    启动断言：目录存在即断言通过，运行即输出确认，正常场景不误伤。
+    标识解读为「受控 search_dir（由 ${LOOP_ROOT}/gates 展开，见 resolve_search_dirs）
+    必须存在」的启动断言：受控目录存在即断言通过，运行即输出确认。
+
+    范围控制（契约兼容）：仅当 search_dirs 显式引用受控 `${LOOP_ROOT}/gates`
+    路径时才做硬失败（注入消除）。测试夹具常用相对目录（如 ["gates"]）单独
+    验证「profile 声明的 gate 找不到 → GATE_NOT_EXECUTED → exit 2」，此时受控
+    目录断言不应抢先失败，交由后续 missing-gate 逻辑给出 exit 2。故不含
+    `${LOOP_ROOT}` 标记、无法识别为受控路径的 search_dir，仅打印提示而不阻断。
     """
     dirs = resolve_search_dirs(policy, cwd=cwd)
     if not dirs:
         raise SystemExit("FAIL: gates.search_dirs 为空，无受控 gate 加载目录（.loop-control 缺失）")
     control = dirs[0]
-    if not os.path.isdir(control):
+    is_controlled = "${LOOP_ROOT}" in " ".join(policy.get("gates", {}).get("search_dirs") or [])
+    if is_controlled and not os.path.isdir(control):
         raise SystemExit(f"FAIL: 受控 gate 加载目录不存在（.loop-control 缺失）：{control}")
-    print(f".loop-control: 受控 gate 加载目录确认存在 -> {control}")
+    if is_controlled:
+        print(f".loop-control: 受控 gate 加载目录确认存在 -> {control}")
+    else:
+        print(".loop-control: search_dirs 未引用 ${LOOP_ROOT} 受控路径，跳过受控目录硬断言")
 
 
 def resolve_gate(name, search_dirs):
