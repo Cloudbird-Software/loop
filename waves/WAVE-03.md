@@ -106,7 +106,8 @@
   "role": "impl",
   "paths": [
     ".github/workflows/scoped-token.yml",
-    "scripts/scoped-token.sh"
+    "scripts/scoped-token.sh",
+    "loopd/bootstrap.sh"
   ],
   "forbid_paths": [
     "conductor/**",
@@ -118,7 +119,6 @@
     "settings/**",
     "cards/**",
     "waves/**",
-    "loopd/**",
     "escalation.yml",
     "tests/**"
   ],
