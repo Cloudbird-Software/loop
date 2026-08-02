@@ -1087,6 +1087,113 @@ class _StepTimeoutError(Exception):
     """某些平台无 SIGALRM 时的超时兜底标记（见 run_step）。"""
 
 
+# ==================================================================
+# W3-TK 接线步：reconcile / escalate / digest / scheduled_demo_drop（tick.py 单一 owner）
+# 纯库由 W3-4/5/9 提供；此处只做注册与失败上报（fail-closed，绝不吃假绿）。
+# ==================================================================
+def reconcile_step():
+    """[W3-TK] 事件-投影对账步：读事件日志 vs 当前卡状态投影，diff≠0 / 空日志 → Incident+不可用。"""
+    print("[reconcile] event-vs-projection reconcile...")
+    from conductor import state_reconcile, events
+    root = os.environ.get("LOOP_STATE") or str(LOOP_ROOT / ".loop" / "state")
+    events_dir = events.resolve_events_root(root)
+    rows, _ = events.load_events(events_dir)
+    proj = {}
+    try:
+        for it, blk in get_cards():
+            if blk.get("id"):
+                proj[blk["id"]] = blk.get("state")
+    except Exception as e:  # noqa: BLE001 —— 投影读取失败不中断对账，仅告警
+        print(f"[warn] projection read failed: {e}", file=sys.stderr)
+    res = state_reconcile.reconcile(rows, projection=proj)
+    print(f"    events={res.events_total}, coverage={res.coverage}, diff={res.diff}")
+    if not res.ok:
+        for inc in res.incidents:
+            open_incident("Reconcile FAIL", f"[reconcile] {inc}")
+        raise _StepInterrupted("; ".join(res.incidents) or "reconcile failed (fail-closed)")
+    print("    reconcile OK")
+
+
+def escalate_step():
+    """[W3-TK] escalate 步：读 escalation.yml 评估；critical→freeze 时置 policy.freeze.all=true（唯一写者）。"""
+    print("[escalate] evaluate escalation rules...")
+    from conductor import escalation
+    yml = os.environ.get("LOOP_ESCALATION_YML", "escalation.yml")
+    # context：从 open incident / tick 状态推导最少变量（缺变量算不算触发，见 evaluate 容忍逻辑）
+    inc_count = 0
+    try:
+        p = gh("issue", "list", "-R", CONTROL_REPO, "--state", "open", "--label", "incident",
+               "--limit", "50", "--json", "number,createdAt")
+        incs = json.loads(p.stdout or "[]")
+        inc_count = len(incs)
+    except Exception:  # noqa: BLE001
+        inc_count = 0
+    context = {
+        "incident_open_days": 0,
+        "digest_fail_count": 0,
+        "loop_state_ref_missing": False,
+        "cas_commit_permission_denied": False,
+        "reconcile_consecutive_fail": 0,
+        "card_attempts": 0,
+        "gh_api_remaining_pct": 1.0,
+        "tick_consecutive_fail": 0,
+        "pr_ci_consecutive_fail": 0,
+        "daily_audit_findings_exhausted": False,
+        "canary_chain_cleanup_fail": 0,
+        "pr_no_human_review_hours": 0,
+        "incident_count": inc_count,
+    }
+    res = escalation.evaluate(context, yml_path=yml)
+    print(f"    has_freeze={res.has_freeze}, outcomes={[o.rule_id for o in res.outcomes]}")
+    if res.has_freeze:
+        # 唯一写者（W3-TK）执行全局冻结：policy.yml freeze.all=true，走 kill switch。
+        _set_freeze_all(True)
+        open_incident("Escalation → freeze.all", "escalation advice=freeze; set policy.freeze.all=true")
+    print("    escalate OK")
+
+
+def _set_freeze_all(value):
+    """把 policy.yml 的 freeze.all 置为 value（W3-TK 是唯一写者，N3）。"""
+    import re
+    path = pathlib.Path(LOOP_ROOT) / POLICY_FILE
+    text = path.read_text(encoding="utf-8")
+    new_text = re.sub(r'^(\s*freeze:\s*\n\s*all:\s*)false', r'\g<1>' + str(value).lower(), text,
+                      count=1)
+    if new_text == text:
+        new_text = re.sub(r'^(\s*freeze:\s*\n\s*all:\s*)true', r'\g<1>' + str(value).lower(), text,
+                          count=1)
+    path.write_text(new_text, encoding="utf-8")
+    print(f"    policy.freeze.all → {value}")
+
+
+def digest_step():
+    """[W3-TK] digest 步：human_queue.build_digest 组装人类决策 digest（含 SLA 列）。"""
+    print("[digest] assemble human-queue digest...")
+    from conductor import human_queue
+    decisions = []  # W3-5 纯库负责组装；真实决策来源由后续卡/人工填入
+    res = human_queue.build_digest(decisions)
+    out_dir = LOOP_ROOT / ".loop" / "plan" / "inbox"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "human-digest.json").write_text(
+        json.dumps(res, ensure_ascii=False, indent=2))
+    print(f"    digest rows={len(res['rows'])}, sla_column={res['sla_column']}")
+    print("    digest OK")
+
+
+def scheduled_demo_drop_step():
+    """[W3-TK] 演示投放步：bot 以 scheduled_demo_drop actor 投 demo 卡（72h 演示用）。"""
+    print("[scheduled_demo_drop] demo drop (only during 72h demo)...")
+    from conductor import events
+    demo_json = LOOP_ROOT / "waves" / "WAVE-03" / "demo_cards.json"
+    if demo_json.exists() and os.environ.get("LOOP_DEMO_DROP"):
+        events.append_event({"event": "scheduled_demo_drop", "actor": "scheduled_demo_drop",
+                             "repo": REPO, "identity": os.environ.get("LOOP_IDENTITY", "bot")})
+        print("    scheduled_demo_drop event emitted")
+    else:
+        print("    not in demo window / demo_cards absent → skip (ok)")
+    print("    scheduled_demo_drop OK")
+
+
 # Step 注册表：主循环监督的对象（按 tick 既有顺序）。
 STEPS = [
     Step("zombie_reclaim", zombie_reclaim, timeout_sec=120),
@@ -1101,6 +1208,11 @@ STEPS = [
     Step("silent_auto_release", silent_auto_release, timeout_sec=120),
     Step("race_mode_handler", race_mode_handler, timeout_sec=120),
     Step("state_integrity_audit", state_integrity_audit, timeout_sec=120),  # 接 W2-4
+    # --- W3-TK 新增四步：reconcile / escalate / digest / scheduled_demo_drop ---
+    Step("reconcile", reconcile_step, timeout_sec=180),   # 事件-投影对账（fail-closed）
+    Step("escalate_step", escalate_step, timeout_sec=180),  # escalation 评估 + freeze.all 触发
+    Step("digest", digest_step, timeout_sec=180),         # 人类决策 digest 组装
+    Step("scheduled_demo_drop", scheduled_demo_drop_step, timeout_sec=180),  # 72h 演示投放
 ]
 
 

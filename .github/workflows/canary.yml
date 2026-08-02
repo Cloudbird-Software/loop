@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os, glob, subprocess, sys, tempfile
+          import datetime
           ROOT = os.path.abspath(os.getcwd())
           import yaml
           sys.path.insert(0, os.path.join(ROOT, "gates"))
@@ -151,6 +152,17 @@ jobs:
           with open(os.path.join(ROOT, "canary", "results.json"), "w", encoding="utf-8") as fh:
               json.dump(payload, fh, indent=2, ensure_ascii=False)
               fh.write("\n")
+          # AC-1/AC-2/AC-5：跨自然日累计的权威历史改为 append-only（追加写，open(...,'a')，绝不覆盖）。
+          # results.json 仍只作"最近一次运行"的镜像快照（供单次读）；跨日判定一律读 canary/history.jsonl。
+          # 每条含要求的字段 date / count / all_intercepted（AC-2，可机器校验）。
+          hist_row = {
+              "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+              "count": len(results),
+              "all_intercepted": ok_all,
+          }
+          hist_path = os.path.join(ROOT, "canary", "history.jsonl")
+          with open(hist_path, "a", encoding="utf-8") as fh:
+              fh.write(json.dumps(hist_row, ensure_ascii=False) + "\n")
           if not ok_all or not all(r["expect_intercepted"] for r in results):
               print(json.dumps(payload, ensure_ascii=False, indent=2)); sys.exit(1)
           print(f"canary faults: {sum(1 for r in results if r['actual_intercepted'])}/{len(results)} "

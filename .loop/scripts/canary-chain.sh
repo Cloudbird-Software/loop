@@ -19,7 +19,7 @@ mkdir -p "$LOGDIR"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$TRACE_FILE" >&2; }
 
 # 配置 git 凭据助手：让 git push 走 gh 的 token（GH_TOKEN）
-gh auth setup-git >/dev/null 2>&1 || true
+gh auth setup-git >/dev/null || true
 
 # 确保辅助标签存在（issue type 由 Card 提供，label 仅作筛选辅助）
 ensure_label() {
@@ -142,25 +142,29 @@ if [ "$MERGED_OK" -ne 1 ]; then
     BLOCK_DONE_BODY='```json loop
 {"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"closed_pr":'"$PR_NUM"'}
 ```'
-    # 清理必须真正生效，否则合成 PR/分支/卡每日堆积，违背卫生目标；且须与合并路径的 issue 清理保持一致的严格度。
-    # 任一清理步骤失败 → 日志留痕 + CLEANUP_FAIL 置位 → 最终 exit 1（走 canary 的 Incident 通道）暴露，不静默吞掉。
+    # 清理必须真正生效，否则合成 PR/分支/卡每日堆积，违背卫生目标。
+    # AC-6（W3-8 假报警修复）：链路存活与否只由"链路步骤"判定——本路径已到达关卡
+    # （reviewDecision=REVIEW_REQUIRED，属预期门禁），链路必然存活。
+    # 清理失败是与链路独立的一回事：发 CLEANUP_WARN 留痕，绝不因清理失败把链路判为
+    # broken（不 exit 1），也不 padding 历史 Incident。清理失败由人工/CI 依据 CLEANUP_WARN 追。
+    # AC-7：清理分支不吞 stderr——各清理命令去掉 `2>&1`，失败原因在日志可见。
     CLEANUP_FAIL=0
     gh pr close "$PR_NUM" -R "$ORG/$PRODUCT" \
-      --comment "canary $CARD_ID: blocked by required approving review (expected gate); chain alive. Cleaning up synthetic PR." >/dev/null 2>&1 \
-      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: close PR #$PR_NUM"; }
-    git push origin --delete "$BRANCH" >/dev/null 2>&1 \
-      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: delete branch $BRANCH"; }
-    gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$BLOCK_DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null 2>&1 \
-      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: update issue #$NUM"; }
-    gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason not_planned >/dev/null 2>&1 \
-      || { CLEANUP_FAIL=1; log "  -> CLEANUP FAIL: close issue #$NUM"; }
+      --comment "canary $CARD_ID: blocked by required approving review (expected gate); chain alive. Cleaning up synthetic PR." >/dev/null \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP WARN: close PR #$PR_NUM (stderr above)"; }
+    git push origin --delete "$BRANCH" >/dev/null \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP WARN: delete branch $BRANCH (stderr above)"; }
+    gh issue edit "$NUM" -R "$ORG/$PRODUCT" --body "$BLOCK_DONE_BODY" --remove-label "claimed" --add-label "done" >/dev/null \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP WARN: update issue #$NUM (stderr above)"; }
+    gh issue close "$NUM" -R "$ORG/$PRODUCT" --reason not_planned >/dev/null \
+      || { CLEANUP_FAIL=1; log "  -> CLEANUP WARN: close issue #$NUM (stderr above)"; }
     if [ "$CLEANUP_FAIL" -ne 0 ]; then
-      log "  -> CLEANUP FAILED: chain alive but synthetic PR/branch/issue may remain"
-      echo "CANARY_CHAIN_FAIL issue=#$NUM pr=#$PR_NUM (cleanup failed)" >&2
-      exit 1
+      echo "CLEANUP_WARN issue=#$NUM pr=#$PR_NUM (synthetic PR/branch/issue cleanup incomplete; chain alive)"
+      log "  -> CLEANUP_WARN: chain alive but synthetic PR/branch/issue cleanup incomplete; needs manual/CI cleanup"
+    else
+      log "  -> done, synthetic PR closed + branch deleted + issue closed"
     fi
-    log "  -> done, synthetic PR closed + branch deleted + issue closed"
-    echo "CANARY_CHAIN_OK issue=#$NUM pr=#$PR_NUM card=$CARD_ID (blocked by required approving review; cleaned up)"
+    echo "CANARY_CHAIN_OK issue=#$NUM pr=#$PR_NUM card=$CARD_ID (blocked by required approving review; chain alive)"
     exit 0
   fi
   log "  -> GATE FAIL: PR #$PR_NUM not merged within 420s (last state=$PR_STATE, reviewDecision=$REVIEW_DECISION)"
@@ -168,8 +172,11 @@ if [ "$MERGED_OK" -ne 1 ]; then
   exit 1
 fi
 log "  -> PR #$PR_NUM merged"
-# 清理 canary 分支（合并后）
-git push origin --delete "$BRANCH" >/dev/null 2>&1 || true
+# 清理 canary 分支（合并后）——删除合并分支为卫生性清理，失败不判链路断，但留 CLEANUP_WARN 留痕。
+if ! git push origin --delete "$BRANCH" >/dev/null; then
+  echo "CLEANUP_WARN branch=$BRANCH (delete failed after merge; may remain)"
+  log "  -> CLEANUP_WARN: delete branch $BRANCH after merge (stderr above)"
+fi
 MERGE_DONE_BODY='```json loop
 {"id":"'"$CARD_ID"'","state":"done","tier":"trivial","role":"impl","paths":["canary/"],"acceptance":["canary passes"],"charter":"Q1","attempt":0,"canary":true,"claim_id":"canary-sid","sandbox":"canary-runner","lease_until":'"$LEASE"',"heartbeat_at":'"$TS"',"merged_pr":'"$PR_NUM"'}
 ```'

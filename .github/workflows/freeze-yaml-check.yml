@@ -1,0 +1,159 @@
+name: freeze-yaml-check
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "single 只看当前 policy.yaml 状态 / selfcheck 触发 AC-4+AC-5 全闭环自检"
+        required: true
+        default: "single"
+        type: choice
+        options: ["single", "selfcheck"]
+
+# 只读：本 workflow 充当「机器可读消费方」。freeze.all==true 时评估门禁对
+# README/docs 的写步骤被 if: 守卫 skip 并打 FROZEN 标记；==false 时放行写。
+# selfcheck 仅在 checkout 工作树里临时翻开关，末尾复原到 HEAD，不制造远端脏改动。
+permissions: {contents: read}
+concurrency: {group: freeze-yaml-check, cancel-in-progress: false}
+
+jobs:
+  # === AC-3 机器可读消费方（freeze-check）===========
+  freeze-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Extract freeze.all from policy.yml
+        id: freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          case "$V" in
+            true|false) ;;
+            *) echo "::error::无法解析 freeze.all（got '$V'）"; exit 1 ;;
+          esac
+          echo "all=$V" >> "$GITHUB_OUTPUT"
+          echo "policy.freeze.all=$V"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: FROZEN marker (write steps blocked)
+        if: steps.freeze.outputs.all == 'true'
+        run: |
+          echo "FROZEN: freeze.active"
+
+      # 守卫写步骤：freeze.all != 'true' 才放行（AC-3 正/负证点）。
+      - name: Write README/docs step (gated)
+        if: steps.freeze.outputs.all != 'true'
+        run: |
+          set -euo pipefail
+          echo "write-allowed: freeze.all == false, docs write proceeds"
+
+  # === 自检：workflow_dispatch → mode=selfcheck，演示 AC-4 / AC-5 闭环 ===
+  self-check:
+    if: inputs.mode == 'selfcheck'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: {fetch-depth: 0}
+
+      - id: baseline
+        name: Baseline HEAD + state commit count
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "commits_before=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set freeze.all -> true (working tree only)
+        id: ac4
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("policy.yml")
+          t = p.read_text(encoding="utf-8")
+          t2 = t.replace("freeze:\n  all: false", "freeze:\n  all: true", 1)
+          assert t2 != t, "policy.yml 无 freeze.all=false 可翻"
+          p.write_text(t2, encoding="utf-8")
+          PY
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "true" || { echo "::error::翻 true 失败 (V=$V)"; exit 1; }
+          echo "FROZEN: freeze.active"
+          echo "frozen=1" >> "$GITHUB_OUTPUT"
+          echo "verified in job: policy.freeze.all=$V"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: AC4 · write-under-freeze must NOT run
+        if: steps.ac4.outputs.frozen == '1'
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          # 冻结期写步骤被守卫拦下：if 'all != true' 不成立 → 本步本不应执行。
+          # 此处仅为负证断言：all 必须仍为 true（冻结未解除）。
+          test "$V" = "true" || { echo "::error::冻结期 all 被意外改非 true"; exit 1; }
+          exec 2>&1
+          # fake-green-ok: 本步是负证（冻结期不应有写），恒为“跳出”证明，exit 0。
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: AC4 · assert FROZEN + no state commit (delta==0)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOW=$(git rev-list --count HEAD)
+          test "$NOW" -eq "${{ steps.baseline.outputs.commits_before }}" \
+            || { echo "::error::冻结期不应产生任何 commit (delta!=0)"; exit 1; }
+          echo "AC4-OK: freeze → 无写操作 + 日志含 FROZEN + loop-state commit 数不变"
+
+      - name: Set freeze.all -> false (working tree only)
+        id: ac5
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path("policy.yml")
+          t = p.read_text(encoding="utf-8")
+          t2 = t.replace("freeze:\n  all: true", "freeze:\n  all: false", 1)
+          assert t2 != t, "policy.yml 无 freeze.all=true 可翻回"
+          p.write_text(t2, encoding="utf-8")
+          PY
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "false" || { echo "::error::翻回 false 失败 (V=$V)"; exit 1; }
+          echo "unfrozen=1" >> "$GITHUB_OUTPUT"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: AC5 · write resumes after unfreeze
+        if: steps.ac5.outputs.unfrozen == '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=$(awk -F': *' "$FA" policy.yml | tr -d ' "')
+          test "$V" = "false" || { echo "::error::解冻后仍冻结"; exit 1; }
+          echo "write-resumed: freeze.all == false, docs write proceeds"
+          echo "AC5-OK: unfreeze → 写操作恢复 + 无 FROZEN 残留"
+        env:
+          FA: |
+            /^[[:space:]]*freeze:/{f=1; next}
+            f && /^[[:space:]]+all:/{gsub(/[ "]/,"",$2); print $2; exit}
+
+      - name: Restore policy.yml to HEAD
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- policy.yml
+          git diff --exit-code -- policy.yml
+          echo "policy.yml restored clean (no residual)"

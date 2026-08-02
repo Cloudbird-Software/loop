@@ -19,3 +19,5 @@ __pycache__/
 # W0-5: HUMAN-TODO.md 是 tick --generate-digest 的产物，不应纳入版本控制
 # （模板在 .loop/templates/human-todo.md）。Code review #11。
 .loop/HUMAN-TODO.md
+# W3-5: human-digest.json 是 tick digest_step 的运行时产物（.loop/plan/inbox/）。
+.loop/plan/inbox/

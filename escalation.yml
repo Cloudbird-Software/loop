@@ -1,0 +1,132 @@
+# escalation.yml — W3-4 escalation 规则库（低强度启动，W3 卡审批）
+#
+# 格式：每条以 ESC- 开头，必填字段：
+#   rule_id: 唯一标识
+#   condition: 触发条件（Python 表达式布尔值，如 incident_count > 3）
+#   severity: critical/high/medium/low → 与 outcome 档位对齐
+#   sla_hours: 两次 breach 之间必须间隔多少小时，避免重复通知
+#   consecutive_breach_threshold: 连续违约多少次才触发 outcome（可选，缺省 3）
+#   on_sla_breach: outcome（notify / warn / freeze），低强度默认 notify
+#
+# outcome 档位（双机制合一：freeze 仅输出 outcome，由 tick/w3-tk 触发 policy.freeze.all）：
+#   notify: 只发通知，不触发冻结 → 低强度默认
+#   warn:   发高优先级警告，仍不冻结（预留）
+#   freeze: severity=critical 且达到阈值 → 触发 policy.freeze.all = true，全局冻结
+#
+# N3: 本文件由 W3-4 写，仅 escalation.evaluate 读，freeze.all 写入仅由 W3-TK（接线卡）执行，
+#     W3-4 绝对不能改 policy.yml 的 freeze 字段 → 防止并发竞争写。
+
+rules:
+  # ESC-01：零待办卡（连续 3 天 无人认领，incident 挂着）
+  - rule_id: ESC-01
+    description: 无人认领 incident 挂开超过 3 天
+    severity: medium
+    condition: incident_open_days > 3
+    sla_hours: 24
+    consecutive_breach_threshold: 3
+    on_sla_breach: notify
+
+  # ESC-02：每日 digest 超过一次失败 → 说明配置错误
+  - rule_id: ESC-02
+    description: 每日 digest 连续 2 次运行失败
+    severity: high
+    condition: digest_fail_count >= 2
+    sla_hours: 24
+    consecutive_breach_threshold: 2
+    on_sla_breach: notify
+
+  # ESC-03：找不到 loop-state ref（CAS 根）→ 无法做状态写入 → critical
+  - rule_id: ESC-03
+    description: 找不到 loop-state 分支/refs，CAS 不可写
+    severity: critical
+    condition: loop_state_ref_missing
+    sla_hours: 1
+    consecutive_breach_threshold: 1
+    on_sla_breach: freeze
+
+  # ESC-04：loop-state 无写权限 → CAS 无法提交 → critical
+  - rule_id: ESC-04
+    description: CAS 提交 403/permission denied，loop-state 无写权限
+    severity: critical
+    condition: cas_commit_permission_denied
+    sla_hours: 1
+    consecutive_breach_threshold: 1
+    on_sla_breach: freeze
+
+  # ESC-05：事件-投影对账连续两次 diff≠0 → 投影与事件日志不一致
+  - rule_id: ESC-05
+    description: 对账 diff≠0 连续两次（事件日志 vs 投影状态）
+    severity: high
+    condition: reconcile_consecutive_fail >= 2
+    sla_hours: 24
+    consecutive_breach_threshold: 2
+    on_sla_breach: notify
+
+  # ESC-06：卡片超过 4 次尝试仍不合并 → 人工介入
+  - rule_id: ESC-06
+    description: 同一卡片尝试 ≥4 次未合并（被验证者反复拒绝）
+    severity: medium
+    condition: card_attempts >= 4
+    sla_hours: 24
+    consecutive_breach_threshold: 1
+    on_sla_breach: notify
+
+  # ESC-07：gh api rate-limit 剩余 <10% → 速率用尽
+  - rule_id: ESC-07
+    description: GitHub API 剩余速率 <10%
+    severity: high
+    condition: gh_api_remaining_pct < 0.1
+    sla_hours: 12
+    consecutive_breach_threshold: 2
+    on_sla_breach: notify
+
+  # ESC-08：连续 tick 运行失败 ≥2 次 → 整个调度断了
+  - rule_id: ESC-08
+    description: tick 连续两次非 freeze 退出失败
+    severity: critical
+    condition: tick_consecutive_fail >= 2
+    sla_hours: 1
+    consecutive_breach_threshold: 2
+    on_sla_breach: freeze
+
+  # ESC-09：CI 门禁连续失败超过阈值 → 提示开发者
+  - rule_id: ESC-09
+    description: PR CI 连续失败超过阈值（≥3 次）未修复
+    severity: medium
+    condition: pr_ci_consecutive_fail >= 3
+    sla_hours: 24
+    consecutive_breach_threshold: 3
+    on_sla_breach: notify
+
+  # ESC-10：审计配额用尽 → 单日新增 finding 超配额
+  - rule_id: ESC-10
+    description: 单日新增 finding 超过审计配额上限（max_new_findings_per_day）
+    severity: medium
+    condition: daily_audit_findings_exhausted
+    sla_hours: 24
+    consecutive_breach_threshold: 1
+    on_sla_breach: notify
+
+  # ESC-11：canary 链路连续失败两次 → 提醒
+  - rule_id: ESC-11
+    description: canary 链路清理连续失败两次
+    severity: medium
+    condition: canary_chain_cleanup_fail >= 2
+    sla_hours: 24
+    consecutive_breach_threshold: 2
+    on_sla_breach: notify
+
+  # ESC-12：PR 超过 72 小时仍未人类评审 → 提醒
+  - rule_id: ESC-12
+    description: PR 超过 72 小时无人类评审
+    severity: low
+    condition: pr_no_human_review_hours > 72
+    sla_hours: 24
+    consecutive_breach_threshold: 1
+    on_sla_breach: notify
+
+# 默认全局配置：低强度启动，on_sla_breach 默认 notify；critical 才走 freeze
+default:
+  on_sla_breach: notify
+  consecutive_breach_threshold: 3
+  sla_hours: 24

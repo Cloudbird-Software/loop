@@ -1,0 +1,56 @@
+[
+  {
+    "id": "D1",
+    "repo": "Cloudbird-Software/loop",
+    "tier": "trivial",
+    "fail": false,
+    "type": "loop-mechanism",
+    "acceptance": "修改 waves/WAVE-03/demo_cards.json 的 D1 描述字段为 'D1 ran', 提交并开 PR。",
+    "note": "loop 机制卡：验证 dispatcher 能把 loop 仓库自身的卡分派给沙盒执行。"
+  },
+  {
+    "id": "D2",
+    "repo": "Cloudbird-Software/product-x",
+    "tier": "trivial",
+    "fail": false,
+    "type": "cross-repo",
+    "acceptance": "在 product-x 的 README.md 追加一行注释 '# D2 demo card', 提交并开 PR。",
+    "note": "跨仓卡：验证跨仓派卡与 scoped token 的 per-repo 收窄。"
+  },
+  {
+    "id": "D3",
+    "repo": "Cloudbird-Software/loop",
+    "tier": "trivial",
+    "fail": false,
+    "type": "plain",
+    "acceptance": "在 loop 的 docs/demo.md 追加一行 'D3 done' 并提交开 PR。",
+    "note": "普通卡：并发打样（与 D1 同仓同窗口，触发 per-repo 背压）。"
+  },
+  {
+    "id": "D4",
+    "repo": "Cloudbird-Software/product-x",
+    "tier": "trivial",
+    "fail": false,
+    "type": "plain",
+    "acceptance": "在 product-x 的 docs/demo.md 追加一行 'D4 done' 并提交开 PR。",
+    "note": "普通跨仓卡：与 D2 同仓但不同窗口，触发并发裁决。"
+  },
+  {
+    "id": "D5",
+    "repo": "Cloudbird-Software/loop",
+    "tier": "trivial",
+    "fail": false,
+    "type": "loop-mechanism",
+    "acceptance": "修改 waves/WAVE-03/demo_cards.json 的 D5 描述字段为 'D5 ran' 并开 PR。",
+    "note": "loop 机制卡：验证 reaper 对 in_progress 卡的回收。"
+  },
+  {
+    "id": "D6",
+    "repo": "Cloudbird-Software/product-x",
+    "tier": "standard",
+    "fail": true,
+    "type": "doomed",
+    "acceptance": "刻意构造一个必然失败的实现（命中 gate_secrets 的硬校验），验证 fail 卡被如实标记且不产生假绿。",
+    "note": "注定失败卡（fail:true）：演示 fail 闭环——验证 FAIL → F-0NN，绝不以假绿收场（N11）。"
+  }
+]

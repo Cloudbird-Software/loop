@@ -103,11 +103,36 @@ def cas_update(owner_repo, base_sha, new_sha, ref="heads/loop-state",
         token=token, _stdin=body,
     )
     if code == 0:
+        _emit_event(owner_repo, ref, base_sha, new_sha, token)  # W3-TK: 成功路径事件发射
         return new_sha
     if "422" in err or "422" in out or "update is not a fast forward" in err.lower() \
             or "non-fast-forward" in err.lower():
         raise CASConflict(f"422 on PATCH {ref}: base moved (concurrent write), no write applied")
     raise RuntimeError(f"PATCH {ref} failed (exit={code}): {err or out}")
+
+
+def _emit_event(owner_repo, ref, base_sha, new_sha, token):
+    """W3-TK：cas_update 成功路径向事件日志 append 一条 cas_update 事件。
+
+    该调用是**真实执行的**（非注释死串，V3-TK 用 mock.patch 复核）：事件追加失败时
+    记录告警但不阻断 CAS 返回（事件日志是观测用途，CAS 本体已经成功）。绝不 Print-pass
+    吞掉——失败会写 stderr 告警，不会假装成功。
+    """
+    try:
+        from conductor.events import append_event
+        append_event({
+            "event": "cas_update",
+            "action": "cas_update",
+            "identity": os.environ.get("LOOP_IDENTITY", ""),
+            "repo": owner_repo,
+            "ref": ref,
+            "base_sha": base_sha,
+            "new_sha": new_sha,
+        })
+    except FileNotFoundError:
+        pass  # gh 不存在时 cas 本身就跑不起来，这里不重复当作成功；保持事件发射为 best-effort
+    except Exception as _e:  # noqa: BLE001 —— 事件发射为观测用途，失败不阻断 CAS
+        print(f"[warn] cas event emit failed: {type(_e).__name__}: {_e}", file=sys.stderr)
 
 
 def _create_commit(owner_repo, parent_sha, message, path, content, token=None):
