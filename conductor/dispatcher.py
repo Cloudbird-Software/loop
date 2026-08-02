@@ -31,15 +31,32 @@ class AssignmentMismatch(Exception):
 
 
 def load_policy(raw=None):
-    """读 policy.yml 完整 dict。raw 入参优先（便于单测）；yaml 缺失回退空。"""
+    """读 policy.yml 完整 dict。raw 入参优先（便于单测）。
+
+    三种读取失败场景分开处理（kill-switch fail-closed，对应 Copilot review）：
+      - raw 显式传入：直接用（不读文件）。
+      - FileNotFoundError：policy 文件尚未创建（新仓库/初始态）→ 回退空 dict，
+        视为未冻结（此时本来就没有 freeze 配置）。
+      - ImportError（PyYAML 缺失）：环境降级 → 回退空 dict（与仓库其他 load_policy 同风格）。
+      - OSError（其他 IO/权限错误）：policy 文件已存在但读不到 → 系统处于异常态，
+        **fail-closed**：视作已冻结（freeze.all=true），拒绝派卡，绝不 fail-open 放行。
+    """
     if raw is not None:
         return raw
+    import builtins as _builtins
     try:
         import yaml as _yaml
-        with open(POLICY_FILE, encoding="utf-8") as f:
+        with _builtins.open(POLICY_FILE, encoding="utf-8") as f:
             return _yaml.safe_load(f) or {}
-    except (ImportError, OSError):  # noqa: F821 —— yaml 缺失或 policy 文件缺失才回退空
+    except FileNotFoundError:
+        # 初始态：policy 尚未创建，无 freeze 配置可循 → 未冻结是合理默认。
         return {}
+    except ImportError:
+        # PyYAML 缺失（环境降级）→ 回退空 dict，与 backpressure/tick 同名函数一致。
+        return {}
+    except OSError:
+        # kill switch 读不到配置即 fail-closed：视作冻结，禁止派卡（N11 反假绿）。
+        return {"freeze": {"all": True}}
 
 
 def _dispatch_cfg(policy):
